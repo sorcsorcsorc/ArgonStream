@@ -1,5 +1,10 @@
 package com.argon.stream.ui.screens.streams
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.runtime.remember
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -84,7 +89,8 @@ fun StreamSelectionScreen(
         onDownloadStream = viewModel::onDownloadClicked,
         onDismissStatus = viewModel::dismissStatusDialog,
         onDismissMultiFile = viewModel::dismissMultiFileDialog,
-        onSelectMultiFile = viewModel::onMultiFileSelected
+        onSelectMultiFile = viewModel::onMultiFileSelected,
+        onDismissToast = viewModel::dismissToast
     )
 }
 
@@ -100,7 +106,8 @@ internal fun StreamSelectionContent(
     onDownloadStream: (StreamCandidate) -> Unit = {},
     onDismissStatus: () -> Unit,
     onDismissMultiFile: () -> Unit,
-    onSelectMultiFile: (Int, com.argon.stream.domain.model.TorBoxMediaFile) -> Unit
+    onSelectMultiFile: (Int, com.argon.stream.domain.model.TorBoxMediaFile) -> Unit,
+    onDismissToast: () -> Unit = {}
 ) {
 
     state.multiFilePrompt?.let { prompt ->
@@ -162,84 +169,127 @@ internal fun StreamSelectionContent(
         )
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        ScreenHeader(
-            title = state.title,
-            subtitle = if (state.isLoading) "Searching your add-ons…" else "${state.streams.size} streams",
-            navigation = {
-                IconButton(onClick = onBack) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+    // Keep the text while the toast fades out after the message is cleared.
+    var lastToast by remember { mutableStateOf("") }
+    state.toastMessage?.let { lastToast = it }
+    LaunchedEffect(state.toastId) {
+        if (state.toastMessage != null) {
+            delay(2_500)
+            onDismissToast()
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            ScreenHeader(
+                title = state.title,
+                subtitle = if (state.isLoading) "Searching your add-ons…" else "${state.streams.size} streams",
+                navigation = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = onRefresh, enabled = !state.isLoading) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Refresh streams")
+                    }
                 }
-            },
-            actions = {
-                IconButton(onClick = onRefresh, enabled = !state.isLoading) {
-                    Icon(Icons.Default.Refresh, contentDescription = "Refresh streams")
+            )
+
+            if (state.isResolving) {
+                Surface(
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        Text(
+                            text = "Preparing stream…",
+                            style = MaterialTheme.typography.labelLarge,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                        )
+                    }
                 }
             }
-        )
 
-        if (state.isResolving) {
-            Surface(
-                color = MaterialTheme.colorScheme.primaryContainer,
-                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column {
-                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                    Text(
-                        text = "Preparing stream…",
-                        style = MaterialTheme.typography.labelLarge,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+            when {
+                state.isLoading -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+
+                !state.hasStreamAddons -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    EmptyState(
+                        icon = Icons.Default.Extension,
+                        title = "No stream add-ons installed",
+                        message = "Argon finds streams through Stremio add-ons. Install one (for example your AIOStreams or Torrentio manifest URL) in Add-ons.",
+                        action = {
+                            Button(onClick = onOpenAddons) { Text("Open Add-ons") }
+                        }
                     )
                 }
+
+                state.streams.isEmpty() -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    EmptyState(
+                        icon = Icons.Default.SearchOff,
+                        title = "No streams found",
+                        message = buildString {
+                            append("Your add-ons didn't return any streams for this title.")
+                            if (state.hiddenByQualityLimit > 0) {
+                                append(" ${state.hiddenByQualityLimit} stream(s) above ${state.maxResolution} are hidden by your quality limit in Settings.")
+                            }
+                            state.providerWarnings.firstOrNull()?.let { append("\n\n$it") }
+                        },
+                        action = {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(onClick = onOpenAddons) { Text("Add-ons") }
+                                if (state.hiddenByQualityLimit > 0) {
+                                    OutlinedButton(onClick = onOpenSettings) { Text("Settings") }
+                                }
+                                Button(onClick = onRefresh) { Text("Retry") }
+                            }
+                        }
+                    )
+                }
+
+                else -> StreamList(
+                    state = state,
+                    onSelectFilter = onSelectFilter,
+                    onSelectStream = onSelectStream,
+                    onDownloadStream = onDownloadStream
+                )
             }
         }
 
-        when {
-            state.isLoading -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
+        // Short, self-dismissing confirmation (e.g. "Downloading…") instead of a blocking dialog.
+        AnimatedVisibility(
+            visible = state.toastMessage != null,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(16.dp)
+        ) {
+            Surface(
+                color = MaterialTheme.colorScheme.inverseSurface,
+                contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+                shape = RoundedCornerShape(12.dp),
+                shadowElevation = 6.dp
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+                ) {
+                    Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = lastToast,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
-
-            !state.hasStreamAddons -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                EmptyState(
-                    icon = Icons.Default.Extension,
-                    title = "No stream add-ons installed",
-                    message = "Argon finds streams through Stremio add-ons. Install one (for example your AIOStreams or Torrentio manifest URL) in Add-ons.",
-                    action = {
-                        Button(onClick = onOpenAddons) { Text("Open Add-ons") }
-                    }
-                )
-            }
-
-            state.streams.isEmpty() -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                EmptyState(
-                    icon = Icons.Default.SearchOff,
-                    title = "No streams found",
-                    message = buildString {
-                        append("Your add-ons didn't return any streams for this title.")
-                        if (state.hiddenByQualityLimit > 0) {
-                            append(" ${state.hiddenByQualityLimit} stream(s) above ${state.maxResolution} are hidden by your quality limit in Settings.")
-                        }
-                        state.providerWarnings.firstOrNull()?.let { append("\n\n$it") }
-                    },
-                    action = {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick = onOpenAddons) { Text("Add-ons") }
-                            if (state.hiddenByQualityLimit > 0) {
-                                OutlinedButton(onClick = onOpenSettings) { Text("Settings") }
-                            }
-                            Button(onClick = onRefresh) { Text("Retry") }
-                        }
-                    }
-                )
-            }
-
-            else -> StreamList(
-                state = state,
-                onSelectFilter = onSelectFilter,
-                onSelectStream = onSelectStream,
-                onDownloadStream = onDownloadStream
-            )
         }
     }
 }

@@ -17,8 +17,8 @@ sealed interface DownloadStartResult {
 }
 
 /**
- * Saves a resolved stream file with Android's DownloadManager, which shows progress in the
- * notification shade and keeps going if the app is closed. Files land in Downloads/Argon.
+ * Saves a resolved stream file with Android's DownloadManager, which keeps going if the app is closed.
+ * No system notification is shown; progress lives in the Downloads tab. Files land in Downloads/Argon.
  */
 @Singleton
 class StreamDownloader @Inject constructor(
@@ -44,7 +44,7 @@ class StreamDownloader @Inject constructor(
         val request = DownloadManager.Request(uri)
             .setTitle(fileName)
             .setDescription(DESCRIPTION)
-            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_HIDDEN)
             .setAllowedOverMetered(true)
         headers.forEach { (name, value) -> request.addRequestHeader(name, value) }
 

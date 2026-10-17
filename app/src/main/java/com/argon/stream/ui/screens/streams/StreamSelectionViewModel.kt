@@ -58,7 +58,9 @@ data class StreamSelectionUiState(
     val maxResolution: String = "2160p",
     val hasStreamAddons: Boolean = true,
     val providerWarnings: List<String> = emptyList(),
-    val multiFilePrompt: MultiFilePromptState? = null
+    val multiFilePrompt: MultiFilePromptState? = null,
+    val toastMessage: String? = null,
+    val toastId: Int = 0
 )
 
 @HiltViewModel
@@ -226,16 +228,19 @@ class StreamSelectionViewModel @Inject constructor(
         }
     }
 
+    fun dismissToast() {
+        _uiState.update { it.copy(toastMessage = null) }
+    }
+
     fun dismissMultiFileDialog() {
         _uiState.update { it.copy(multiFilePrompt = null) }
     }
 
     private fun startDownload(url: String, name: String, headers: Map<String, String>) {
         when (val result = streamDownloader.enqueue(url, name, headers)) {
-            is DownloadStartResult.Started -> showStatus(
-                "Downloading \"${result.fileName}\" to ${result.locationLabel}. Follow progress and play it from the Downloads tab.",
-                isError = false
-            )
+            is DownloadStartResult.Started -> _uiState.update {
+                it.copy(toastMessage = "Downloading… check the Downloads tab", toastId = it.toastId + 1)
+            }
             is DownloadStartResult.NotSupported -> showStatus(result.reason, isError = true)
         }
     }

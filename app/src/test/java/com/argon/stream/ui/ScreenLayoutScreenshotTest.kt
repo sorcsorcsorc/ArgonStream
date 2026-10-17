@@ -183,7 +183,9 @@ class ScreenLayoutScreenshotTest {
                 streams = sampleStreams,
                 hiddenByQualityLimit = 2,
                 maxResolution = "1080p",
-                providerWarnings = listOf("Torrentio: Connection timed out.")
+                providerWarnings = listOf("Torrentio: Connection timed out."),
+                toastMessage = "Downloading… check the Downloads tab",
+                toastId = 1
             ),
             onBack = {}, onOpenAddons = {}, onOpenSettings = {}, onRefresh = {}, onSelectFilter = {},
             onSelectStream = {}, onDismissStatus = {}, onDismissMultiFile = {}, onSelectMultiFile = { _, _ -> }

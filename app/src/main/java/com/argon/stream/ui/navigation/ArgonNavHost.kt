@@ -155,14 +155,7 @@ fun ArgonNavHost(
                 }
 
                 composable(TopLevelDestination.LIBRARY.route) {
-                    LibraryScreen(
-                        onOpenMediaDetails = openDetails,
-                        onPlayLocalFile = { uri, name ->
-                            navController.navigate(
-                                "$PLAYER_ROUTE_PREFIX?videoId=&streamUrl=${Uri.encode(uri.toString())}&streamTitle=${Uri.encode(name)}"
-                            )
-                        }
-                    )
+                    LibraryScreen(onOpenMediaDetails = openDetails)
                 }
 
                 composable(TopLevelDestination.DOWNLOADS.route) {
