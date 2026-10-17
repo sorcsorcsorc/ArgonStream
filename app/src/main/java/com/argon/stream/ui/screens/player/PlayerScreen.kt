@@ -16,6 +16,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -82,6 +84,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -97,10 +100,14 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.media3.common.Player
+import androidx.media3.common.text.Cue
+import androidx.media3.common.text.CueGroup
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
+import androidx.media3.ui.SubtitleView
 import com.argon.stream.core.player.PictureInPictureState
 import com.argon.stream.core.player.buildPipParams
 import com.argon.stream.core.player.pipAspectRatio
@@ -142,6 +149,20 @@ fun PlayerScreen(
     var fitMode by remember { mutableStateOf(FitMode.FIT) }
     var scrubFraction by remember { mutableStateOf<Float?>(null) }
     var volumeDragAccumulator by remember { mutableFloatStateOf(0f) }
+    var subtitleCues by remember { mutableStateOf<List<Cue>>(emptyList()) }
+
+    // Subtitles are drawn in their own full-screen layer so zoom/stretch can't push them off screen.
+    DisposableEffect(viewModel.exoPlayer) {
+        val player = viewModel.exoPlayer
+        val listener = object : Player.Listener {
+            override fun onCues(cueGroup: CueGroup) {
+                subtitleCues = cueGroup.cues
+            }
+        }
+        player.addListener(listener)
+        subtitleCues = player.currentCues.cues
+        onDispose { player.removeListener(listener) }
+    }
 
     fun showHud(text: String) {
         gestureHudText = text
@@ -292,6 +313,41 @@ fun PlayerScreen(
             .fillMaxSize()
             .background(Color.Black)
             .pointerInput(Unit) {
+                // Two fingers: pinch out = zoom to fill, pinch in = fit, two-finger tap = toggle.
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    var startDistance = 0f
+                    var multiTouch = false
+                    var scaled = false
+                    do {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        val pressed = event.changes.filter { it.pressed }
+                        if (pressed.size >= 2) {
+                            multiTouch = true
+                            val distance = (pressed[0].position - pressed[1].position).getDistance()
+                            if (startDistance == 0f) startDistance = distance
+                            if (!scaled && startDistance > 0f) {
+                                val ratio = distance / startDistance
+                                if (ratio > 1.12f) {
+                                    fitMode = FitMode.ZOOM
+                                    showHud("Zoom to fill")
+                                    scaled = true
+                                } else if (ratio < 0.89f) {
+                                    fitMode = FitMode.FIT
+                                    showHud("Fit to screen")
+                                    scaled = true
+                                }
+                            }
+                        }
+                        if (multiTouch) event.changes.forEach { it.consume() }
+                    } while (event.changes.any { it.pressed })
+                    if (multiTouch && !scaled) {
+                        fitMode = if (fitMode == FitMode.FIT) FitMode.ZOOM else FitMode.FIT
+                        showHud(if (fitMode == FitMode.FIT) "Fit to screen" else "Zoom to fill")
+                    }
+                }
+            }
+            .pointerInput(Unit) {
                 detectTapGestures(
                     onTap = {
                         showControls = !showControls
@@ -349,7 +405,19 @@ fun PlayerScreen(
                     useController = false
                     player = viewModel.exoPlayer
                     setShutterBackgroundColor(android.graphics.Color.BLACK)
-                    subtitleView?.setStyle(
+                    // The built-in subtitle view lives inside the zoomed video frame; ours is screen-sized.
+                    subtitleView?.visibility = android.view.View.GONE
+                }
+            },
+            update = { playerView -> playerView.resizeMode = fitMode.resizeMode },
+            onRelease = { it.player = null },
+            modifier = Modifier.fillMaxSize()
+        )
+
+        AndroidView(
+            factory = { ctx ->
+                SubtitleView(ctx).apply {
+                    setStyle(
                         CaptionStyleCompat(
                             android.graphics.Color.WHITE,
                             android.graphics.Color.TRANSPARENT,
@@ -359,17 +427,17 @@ fun PlayerScreen(
                             null
                         )
                     )
+                    setBottomPaddingFraction(SubtitleView.DEFAULT_BOTTOM_PADDING_FRACTION)
                 }
             },
-            update = { playerView ->
-                playerView.resizeMode = fitMode.resizeMode
-                playerView.subtitleView?.setFixedTextSize(
-                    android.util.TypedValue.COMPLEX_UNIT_SP,
-                    state.subtitleScale.fontSizeSp
-                )
+            update = { view ->
+                view.setFixedTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, state.subtitleScale.fontSizeSp)
+                view.setCues(if (state.subtitlesEnabled) subtitleCues else emptyList())
             },
-            onRelease = { it.player = null },
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.displayCutout)
+                .padding(horizontal = 12.dp)
         )
 
         if (state.isBuffering && state.playbackError == null) {

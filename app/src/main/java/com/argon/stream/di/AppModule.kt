@@ -1,6 +1,7 @@
 package com.argon.stream.di
 
 import android.content.Context
+import com.argon.stream.BuildConfig
 import androidx.room.Room
 import com.argon.stream.core.network.RedactingLoggingInterceptor
 import com.argon.stream.core.network.TmdbAuthInterceptor
@@ -45,6 +46,15 @@ object AppModule {
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(20, TimeUnit.SECONDS)
             .writeTimeout(15, TimeUnit.SECONDS)
+            .addInterceptor { chain ->
+                // Some image hosts (e.g. Wikimedia) reject OkHttp's generic user agent.
+                val request = chain.request()
+                chain.proceed(
+                    if (request.header("User-Agent") == null) {
+                        request.newBuilder().header("User-Agent", "ArgonStream/${BuildConfig.VERSION_NAME} (Android app)").build()
+                    } else request
+                )
+            }
             .addInterceptor(redactingLoggingInterceptor)
             .build()
     }

@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Refresh
@@ -80,6 +81,7 @@ fun StreamSelectionScreen(
         onRefresh = viewModel::refreshStreams,
         onSelectFilter = viewModel::setResolutionFilter,
         onSelectStream = viewModel::onCandidateClicked,
+        onDownloadStream = viewModel::onDownloadClicked,
         onDismissStatus = viewModel::dismissStatusDialog,
         onDismissMultiFile = viewModel::dismissMultiFileDialog,
         onSelectMultiFile = viewModel::onMultiFileSelected
@@ -95,6 +97,7 @@ internal fun StreamSelectionContent(
     onRefresh: () -> Unit,
     onSelectFilter: (String?) -> Unit,
     onSelectStream: (StreamCandidate) -> Unit,
+    onDownloadStream: (StreamCandidate) -> Unit = {},
     onDismissStatus: () -> Unit,
     onDismissMultiFile: () -> Unit,
     onSelectMultiFile: (Int, com.argon.stream.domain.model.TorBoxMediaFile) -> Unit
@@ -103,7 +106,7 @@ internal fun StreamSelectionContent(
     state.multiFilePrompt?.let { prompt ->
         AlertDialog(
             onDismissRequest = onDismissMultiFile,
-            title = { Text("Choose a file") },
+            title = { Text(if (prompt.forDownload) "Choose a file to download" else "Choose a file") },
             text = {
                 Column {
                     Text(
@@ -234,7 +237,8 @@ internal fun StreamSelectionContent(
             else -> StreamList(
                 state = state,
                 onSelectFilter = onSelectFilter,
-                onSelectStream = onSelectStream
+                onSelectStream = onSelectStream,
+                onDownloadStream = onDownloadStream
             )
         }
     }
@@ -244,7 +248,8 @@ internal fun StreamSelectionContent(
 private fun StreamList(
     state: StreamSelectionUiState,
     onSelectFilter: (String?) -> Unit,
-    onSelectStream: (StreamCandidate) -> Unit
+    onSelectStream: (StreamCandidate) -> Unit,
+    onDownloadStream: (StreamCandidate) -> Unit
 ) {
     var showWarnings by rememberSaveable { mutableStateOf(false) }
 
@@ -301,7 +306,8 @@ private fun StreamList(
             StreamCandidateCard(
                 candidate = candidate,
                 enabled = !state.isResolving,
-                onClick = { onSelectStream(candidate) }
+                onClick = { onSelectStream(candidate) },
+                onDownload = { onDownloadStream(candidate) }
             )
         }
     }
@@ -312,7 +318,8 @@ private fun StreamList(
 private fun StreamCandidateCard(
     candidate: StreamCandidate,
     enabled: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onDownload: () -> Unit
 ) {
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainer,
@@ -381,13 +388,22 @@ private fun StreamCandidateCard(
                     overflow = TextOverflow.Ellipsis
                 )
             }
-            Spacer(modifier = Modifier.width(8.dp))
-            Icon(
-                imageVector = Icons.Default.PlayCircle,
-                contentDescription = "Play",
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(32.dp)
-            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(
+                    imageVector = Icons.Default.PlayCircle,
+                    contentDescription = "Play",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(32.dp)
+                )
+                IconButton(onClick = onDownload, enabled = enabled) {
+                    Icon(
+                        imageVector = Icons.Default.Download,
+                        contentDescription = "Download",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
         }
     }
 }

@@ -3,6 +3,8 @@ package com.argon.stream.ui.screens.streams
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.argon.stream.core.download.DownloadStartResult
+import com.argon.stream.core.download.StreamDownloader
 import com.argon.stream.core.network.NetworkResult
 import com.argon.stream.core.player.ExternalPlayerLauncher
 import com.argon.stream.core.player.PlaybackRequest
@@ -38,7 +40,8 @@ data class ReadyStreamLaunchEvent(
 data class MultiFilePromptState(
     val torrentId: Int,
     val torrentName: String,
-    val files: List<TorBoxMediaFile>
+    val files: List<TorBoxMediaFile>,
+    val forDownload: Boolean = false
 )
 
 data class StreamSelectionUiState(
@@ -66,7 +69,8 @@ class StreamSelectionViewModel @Inject constructor(
     private val catalogRepository: CatalogRepository,
     private val preferencesRepository: UserPreferencesRepository,
     private val playbackSessionStore: PlaybackSessionStore,
-    private val externalPlayerLauncher: ExternalPlayerLauncher
+    private val externalPlayerLauncher: ExternalPlayerLauncher,
+    private val streamDownloader: StreamDownloader
 ) : ViewModel() {
 
     val stremioVideoId: String = savedStateHandle["videoId"] ?: ""
@@ -161,23 +165,31 @@ class StreamSelectionViewModel @Inject constructor(
         _uiState.update { it.copy(statusBanner = null, isStatusError = false) }
     }
 
-    fun onCandidateClicked(candidate: StreamCandidate) {
+    fun onCandidateClicked(candidate: StreamCandidate) = resolveCandidate(candidate, forDownload = false)
+
+    fun onDownloadClicked(candidate: StreamCandidate) = resolveCandidate(candidate, forDownload = true)
+
+    private fun resolveCandidate(candidate: StreamCandidate, forDownload: Boolean) {
         if (_uiState.value.isResolving) return
         viewModelScope.launch {
             _uiState.update { it.copy(isResolving = true, statusBanner = null) }
             val outcome = torBoxRepository.resolveStreamCandidate(candidate, stremioVideoId)
             _uiState.update { it.copy(isResolving = false) }
             when (outcome) {
-                is TorBoxResolutionOutcome.ReadyToPlay -> launchPlayback(
-                    streamUrl = outcome.resolvedStreamUrl,
-                    headers = candidate.requestHeaders
-                )
+                is TorBoxResolutionOutcome.ReadyToPlay -> if (forDownload) {
+                    val name = candidate.filenameHint
+                        ?: if (outcome.torrentId == -1) displayTitle else outcome.fileName
+                    startDownload(outcome.resolvedStreamUrl, name, candidate.requestHeaders)
+                } else {
+                    launchPlayback(streamUrl = outcome.resolvedStreamUrl, headers = candidate.requestHeaders)
+                }
                 is TorBoxResolutionOutcome.MultiFileSelectionRequired -> _uiState.update {
                     it.copy(
                         multiFilePrompt = MultiFilePromptState(
                             torrentId = outcome.torrentId,
                             torrentName = outcome.torrentName,
-                            files = outcome.playableFiles
+                            files = outcome.playableFiles,
+                            forDownload = forDownload
                         )
                     )
                 }
@@ -196,13 +208,18 @@ class StreamSelectionViewModel @Inject constructor(
     }
 
     fun onMultiFileSelected(torrentId: Int, file: TorBoxMediaFile) {
+        val forDownload = _uiState.value.multiFilePrompt?.forDownload == true
         _uiState.update { it.copy(multiFilePrompt = null) }
         viewModelScope.launch {
             _uiState.update { it.copy(isResolving = true) }
             val outcome = torBoxRepository.requestDirectLinkForFile(torrentId, file.id, file.shortName)
             _uiState.update { it.copy(isResolving = false) }
             when (outcome) {
-                is TorBoxResolutionOutcome.ReadyToPlay -> launchPlayback(outcome.resolvedStreamUrl, emptyMap())
+                is TorBoxResolutionOutcome.ReadyToPlay -> if (forDownload) {
+                    startDownload(outcome.resolvedStreamUrl, file.shortName, emptyMap())
+                } else {
+                    launchPlayback(outcome.resolvedStreamUrl, emptyMap())
+                }
                 is TorBoxResolutionOutcome.Failed -> showStatus(outcome.userMessage, isError = true)
                 else -> Unit
             }
@@ -211,6 +228,17 @@ class StreamSelectionViewModel @Inject constructor(
 
     fun dismissMultiFileDialog() {
         _uiState.update { it.copy(multiFilePrompt = null) }
+    }
+
+    private fun startDownload(url: String, name: String, headers: Map<String, String>) {
+        when (val result = streamDownloader.enqueue(url, name, headers)) {
+            is DownloadStartResult.Started -> showStatus(
+                "Downloading \"${result.fileName}\" to ${result.locationLabel}. Progress is shown in your notifications; " +
+                    "play it later from Library → Play a file.",
+                isError = false
+            )
+            is DownloadStartResult.NotSupported -> showStatus(result.reason, isError = true)
+        }
     }
 
     private suspend fun launchPlayback(streamUrl: String, headers: Map<String, String>) {

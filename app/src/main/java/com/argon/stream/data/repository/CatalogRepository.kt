@@ -11,6 +11,7 @@ import com.argon.stream.data.remote.cinemeta.CinemetaMetaDto
 import com.argon.stream.data.remote.tmdb.TmdbApiService
 import com.argon.stream.data.remote.tmdb.TmdbDetailsDto
 import com.argon.stream.data.remote.tmdb.TmdbMediaDto
+import com.argon.stream.data.remote.wikipedia.WikipediaPhotoClient
 import com.argon.stream.domain.model.CastMember
 import com.argon.stream.domain.model.CatalogRow
 import com.argon.stream.domain.model.EpisodeItem
@@ -40,6 +41,7 @@ import javax.inject.Singleton
 class CatalogRepository @Inject constructor(
     private val tmdbApi: TmdbApiService,
     private val cinemeta: CinemetaClient,
+    private val wikipediaPhotos: WikipediaPhotoClient,
     private val watchHistoryDao: WatchHistoryDao,
     private val watchlistDao: WatchlistDao,
     private val secretVault: SecretVault
@@ -297,21 +299,35 @@ class CatalogRepository @Inject constructor(
                             airDate = eps.firstNotNullOfOrNull { it.released ?: it.firstAired }?.take(10)
                         )
                     }
+                val tmdbExtras = loadTmdbExtrasFor(mediaType, meta.tmdbId)
+                val cast = tmdbExtras?.cast?.takeIf { it.isNotEmpty() }
+                    ?: castWithWikipediaPhotos(meta.cast.orEmpty())
                 NetworkResult.Success(
                     MediaDetails(
                         item = item,
                         runtimeMinutes = meta.runtime?.filter { it.isDigit() }?.toIntOrNull(),
                         status = meta.status,
-                        tagline = null,
-                        cast = meta.cast.orEmpty().take(15).mapIndexed { idx, name ->
-                            CastMember(id = idx, name = name, character = "", profileUrl = null)
-                        },
+                        tagline = tmdbExtras?.tagline,
+                        cast = cast,
                         seasons = seasons
                     )
                 )
             }
             is NetworkResult.Error -> res
         }
+    }
+
+    /** Full cast with photos (and tagline) from TMDB when a key is set and Cinemeta knows the TMDB id. */
+    private suspend fun loadTmdbExtrasFor(mediaType: MediaType, tmdbId: Int?): MediaDetails? {
+        val apiKey = getTmdbApiKeyOrNull() ?: return null
+        if (tmdbId == null) return null
+        return (loadTmdbDetails(mediaType, tmdbId, apiKey) as? NetworkResult.Success)?.data
+    }
+
+    private suspend fun castWithWikipediaPhotos(names: List<String>): List<CastMember> = coroutineScope {
+        names.take(15).mapIndexed { idx, name ->
+            async { CastMember(id = idx, name = name, character = "", profileUrl = wikipediaPhotos.actorPhotoUrl(name)) }
+        }.map { it.await() }
     }
 
     private suspend fun fetchCinemetaMeta(mediaType: MediaType, imdbId: String): NetworkResult<CinemetaMetaDto> {
