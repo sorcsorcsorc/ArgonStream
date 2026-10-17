@@ -15,7 +15,9 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -58,6 +60,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.ScreenRotation
+import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -84,6 +87,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -114,6 +124,8 @@ import com.argon.stream.core.player.pipAspectRatio
 import com.argon.stream.core.player.supportsPictureInPicture
 import com.argon.stream.core.player.tryEnterPictureInPicture
 import com.argon.stream.domain.model.ExternalPlayerTarget
+import com.argon.stream.domain.model.MediaType
+import com.argon.stream.ui.components.LocalIsTv
 import com.argon.stream.domain.model.SelectableTrackInfo
 import kotlinx.coroutines.delay
 import java.util.Locale
@@ -130,6 +142,7 @@ internal enum class FitMode(val label: String, val resizeMode: Int) {
 @Composable
 fun PlayerScreen(
     onBack: () -> Unit,
+    onOpenStreams: (type: MediaType, mediaId: String, videoId: String, title: String) -> Unit = { _, _, _, _ -> },
     viewModel: PlayerViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -137,6 +150,9 @@ fun PlayerScreen(
     val activity = remember(context) { context.findActivity() }
     val audioManager = remember(context) { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     val lifecycleOwner = LocalLifecycleOwner.current
+    val isTv = LocalIsTv.current
+    val rootFocus = remember { FocusRequester() }
+    val playButtonFocus = remember { FocusRequester() }
 
     var showControls by remember { mutableStateOf(true) }
     var interactionTick by remember { mutableIntStateOf(0) }
@@ -220,6 +236,21 @@ fun PlayerScreen(
         PictureInPictureState.autoEnterEnabled = state.isPlaying
         runCatching { activity?.setPictureInPictureParams(buildPipParams(autoEnter = state.isPlaying)) }
     }
+
+    LaunchedEffect(Unit) {
+        viewModel.events.collect { event ->
+            when (event) {
+                is PlayerEvent.OpenStreamPicker -> onOpenStreams(event.mediaType, event.mediaId, event.videoId, event.title)
+            }
+        }
+    }
+
+    // TV remote: when controls hide, focus returns to the player so D-pad keys seek / play-pause.
+    LaunchedEffect(showControls, isTv) {
+        if (!showControls) runCatching { rootFocus.requestFocus() }
+        else if (isTv) runCatching { playButtonFocus.requestFocus() }
+    }
+    BackHandler(enabled = isTv && showControls && state.playbackError == null) { showControls = false }
 
     // Pause (and save progress) when the app goes to the background.
     DisposableEffect(lifecycleOwner) {
@@ -312,6 +343,32 @@ fun PlayerScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
+            .focusRequester(rootFocus)
+            .focusable()
+            .onKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                when (event.key) {
+                    Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause -> {
+                        viewModel.togglePlayPause(); showControls = true; registerInteraction(); true
+                    }
+                    Key.MediaFastForward -> { viewModel.seekRelative(PlayerViewModel.SEEK_STEP_MS); showHud("+10s"); true }
+                    Key.MediaRewind -> { viewModel.seekRelative(-PlayerViewModel.SEEK_STEP_MS); showHud("−10s"); true }
+                    else -> if (!showControls) {
+                        when (event.key) {
+                            Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.Spacebar -> {
+                                viewModel.togglePlayPause(); showControls = true; true
+                            }
+                            Key.DirectionLeft -> { viewModel.seekRelative(-PlayerViewModel.SEEK_STEP_MS); showHud("−10s"); true }
+                            Key.DirectionRight -> { viewModel.seekRelative(PlayerViewModel.SEEK_STEP_MS); showHud("+10s"); true }
+                            Key.DirectionUp, Key.DirectionDown -> { showControls = true; registerInteraction(); true }
+                            else -> false
+                        }
+                    } else {
+                        registerInteraction()
+                        false
+                    }
+                }
+            }
             .pointerInput(Unit) {
                 // Two fingers: pinch out = zoom to fill, pinch in = fit, two-finger tap = toggle.
                 awaitEachGesture {
@@ -464,6 +521,25 @@ fun PlayerScreen(
             }
         }
 
+        val nextEpisode = state.nextEpisode
+        val remainingMs = state.durationMs - state.currentPositionMs
+        val showNextCard = !isInPip && nextEpisode != null && state.playbackError == null &&
+            (state.isEnded || state.nextEpisodeCountdown != null || state.isLoadingNextEpisode ||
+                (state.durationMs > 0L && remainingMs in 1L..NEXT_EPISODE_PROMPT_MS))
+        if (showNextCard && nextEpisode != null) {
+            NextEpisodeCard(
+                next = nextEpisode,
+                countdown = state.nextEpisodeCountdown,
+                isLoading = state.isLoadingNextEpisode,
+                onPlay = viewModel::playNextEpisode,
+                onCancel = viewModel::cancelNextEpisodeCountdown,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .windowInsetsPadding(WindowInsets.displayCutout.union(WindowInsets.systemBars))
+                    .padding(end = 16.dp, bottom = 72.dp)
+            )
+        }
+
         AnimatedVisibility(
             visible = !isInPip && (showControls || state.playbackError != null || !state.isPlaying && !state.isBuffering),
             enter = fadeIn(),
@@ -510,7 +586,9 @@ fun PlayerScreen(
                     scrubFraction = null
                 },
                 onRetry = viewModel::retryPlayback,
-                onEnterPip = if (pipSupported) {
+                playButtonFocus = playButtonFocus,
+                showPhoneControls = !isTv,
+                onEnterPip = if (pipSupported && !isTv) {
                     { activity?.tryEnterPictureInPicture() }
                 } else null
             )
@@ -536,7 +614,9 @@ internal fun PlayerControlsOverlay(
     onScrub: (Float) -> Unit,
     onScrubFinished: () -> Unit,
     onRetry: () -> Unit,
-    onEnterPip: (() -> Unit)? = null
+    onEnterPip: (() -> Unit)? = null,
+    playButtonFocus: FocusRequester? = null,
+    showPhoneControls: Boolean = true
 ) {
     Box(
         modifier = Modifier
@@ -586,8 +666,10 @@ internal fun PlayerControlsOverlay(
                     Icon(Icons.Default.PictureInPictureAlt, contentDescription = "Picture in picture", tint = Color.White)
                 }
             }
-            IconButton(onClick = onRotate) {
-                Icon(Icons.Default.ScreenRotation, contentDescription = "Rotate", tint = Color.White)
+            if (showPhoneControls) {
+                IconButton(onClick = onRotate) {
+                    Icon(Icons.Default.ScreenRotation, contentDescription = "Rotate", tint = Color.White)
+                }
             }
             if (state.availableExternalPlayers.any { it != ExternalPlayerTarget.INTERNAL_EXOPLAYER }) {
                 IconButton(onClick = onExternal) {
@@ -650,7 +732,10 @@ internal fun PlayerControlsOverlay(
                     color = Color.White.copy(alpha = 0.15f),
                     modifier = Modifier.size(72.dp)
                 ) {
-                    IconButton(onClick = onTogglePlay) {
+                    IconButton(
+                        onClick = onTogglePlay,
+                        modifier = if (playButtonFocus != null) Modifier.focusRequester(playButtonFocus) else Modifier
+                    ) {
                         Icon(
                             imageVector = when {
                                 state.isEnded -> Icons.Default.Replay
@@ -824,6 +909,50 @@ private fun ExternalPlayerHandoffDialog(
         confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }
+
+@Composable
+private fun NextEpisodeCard(
+    next: NextEpisodeInfo,
+    countdown: Int?,
+    isLoading: Boolean,
+    onPlay: () -> Unit,
+    onCancel: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        color = Color.Black.copy(alpha = 0.8f),
+        contentColor = Color.White,
+        shape = RoundedCornerShape(14.dp),
+        modifier = modifier.widthIn(max = 320.dp)
+    ) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                text = "Next: S${next.seasonNumber} · E${next.episodeNumber}",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Text(next.title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Button(onClick = onPlay, enabled = !isLoading) {
+                    if (isLoading) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Loading…")
+                    } else {
+                        Icon(Icons.Default.SkipNext, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(if (countdown != null) "Play in ${countdown}s" else "Play next")
+                    }
+                }
+                if (countdown != null) {
+                    TextButton(onClick = onCancel) { Text("Cancel", color = Color.White) }
+                }
+            }
+        }
+    }
+}
+
+private const val NEXT_EPISODE_PROMPT_MS = 45_000L
 
 private fun formatSpeed(speed: Float): String =
     if (speed == 1.0f) "Normal" else String.format(Locale.US, "%sx", speed.toString().removeSuffix(".0"))

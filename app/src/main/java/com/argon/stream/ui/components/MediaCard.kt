@@ -49,6 +49,7 @@ fun MediaCard(
 ) {
     Column(
         modifier = modifier
+            .focusHighlight(zoom = true)
             .clickable(
                 role = Role.Button,
                 onClickLabel = "Open details for ${item.title}"

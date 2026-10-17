@@ -37,6 +37,8 @@ data class StreamCandidate(
     val languages: List<String> = emptyList(),
     val requestHeaders: Map<String, String> = emptyMap(),
     val filenameHint: String? = null,
+    /** Stremio behaviorHints.bingeGroup: same value = same release/source across episodes. */
+    val bingeGroup: String? = null,
     val isCachedOnDebrid: Boolean = false
 )
 

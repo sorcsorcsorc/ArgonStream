@@ -9,10 +9,13 @@ import com.argon.stream.core.network.NetworkResult
 import com.argon.stream.core.player.ExternalPlayerLauncher
 import com.argon.stream.core.player.PlaybackRequest
 import com.argon.stream.core.player.PlaybackSessionStore
+import com.argon.stream.data.local.StreamChoiceDao
+import com.argon.stream.data.local.StreamChoiceEntity
 import com.argon.stream.data.local.UserPreferencesRepository
 import com.argon.stream.data.remote.addon.StreamMetadataParser
 import com.argon.stream.data.repository.AddonRepository
 import com.argon.stream.data.repository.CatalogRepository
+import com.argon.stream.data.repository.ProfileRepository
 import com.argon.stream.data.repository.TorBoxRepository
 import com.argon.stream.domain.model.ExternalPlayerTarget
 import com.argon.stream.domain.model.MediaItem
@@ -60,6 +63,8 @@ data class StreamSelectionUiState(
     val providerWarnings: List<String> = emptyList(),
     val multiFilePrompt: MultiFilePromptState? = null,
     val toastMessage: String? = null,
+    /** uniqueKey of the stream matching the source picked last time for this title. */
+    val lastUsedKey: String? = null,
     val toastId: Int = 0
 )
 
@@ -72,7 +77,9 @@ class StreamSelectionViewModel @Inject constructor(
     private val preferencesRepository: UserPreferencesRepository,
     private val playbackSessionStore: PlaybackSessionStore,
     private val externalPlayerLauncher: ExternalPlayerLauncher,
-    private val streamDownloader: StreamDownloader
+    private val streamDownloader: StreamDownloader,
+    private val profileRepository: ProfileRepository,
+    private val streamChoiceDao: StreamChoiceDao
 ) : ViewModel() {
 
     val stremioVideoId: String = savedStateHandle["videoId"] ?: ""
@@ -96,6 +103,7 @@ class StreamSelectionViewModel @Inject constructor(
 
     private var allStreams: List<StreamCandidate> = emptyList()
     private var mediaItem: MediaItem? = null
+    private var lastResolvedCandidate: StreamCandidate? = null
 
     init {
         viewModelScope.launch {
@@ -133,9 +141,16 @@ class StreamSelectionViewModel @Inject constructor(
                     .thenByDescending { it.seeders ?: 0 }
             )
 
+            val choice = mediaId.takeIf { it.isNotBlank() }?.let { streamChoiceDao.get(profileRepository.currentProfileId(), it) }
+            val lastUsed = choice?.let { c ->
+                sorted.firstOrNull { c.bingeGroup != null && it.bingeGroup == c.bingeGroup }
+                    ?: sorted.firstOrNull { it.addonId == c.addonId && it.resolution == c.resolution }
+            }
+
             val maxScore = StreamMetadataParser.resolutionScore(prefs.preferredMaxResolution)
                 .takeIf { it > 0 } ?: Int.MAX_VALUE
             val withinLimit = sorted.filter { StreamMetadataParser.resolutionScore(it.resolution) <= maxScore }
+                .let { list -> if (lastUsed != null && lastUsed in list) listOf(lastUsed) + (list - lastUsed) else list }
 
             allStreams = withinLimit
             _uiState.update { state ->
@@ -150,6 +165,7 @@ class StreamSelectionViewModel @Inject constructor(
                     hiddenByQualityLimit = sorted.size - withinLimit.size,
                     maxResolution = prefs.preferredMaxResolution,
                     hasStreamAddons = hasStreamAddons,
+                    lastUsedKey = lastUsed?.takeIf { it in withinLimit }?.uniqueKey,
                     providerWarnings = warnings
                 )
             }
@@ -177,6 +193,7 @@ class StreamSelectionViewModel @Inject constructor(
             _uiState.update { it.copy(isResolving = true, statusBanner = null) }
             val outcome = torBoxRepository.resolveStreamCandidate(candidate, stremioVideoId)
             _uiState.update { it.copy(isResolving = false) }
+            if (!forDownload) lastResolvedCandidate = candidate
             when (outcome) {
                 is TorBoxResolutionOutcome.ReadyToPlay -> if (forDownload) {
                     val name = candidate.filenameHint
@@ -246,6 +263,7 @@ class StreamSelectionViewModel @Inject constructor(
     }
 
     private suspend fun launchPlayback(streamUrl: String, headers: Map<String, String>) {
+        rememberStreamChoice()
         val prefs = preferencesRepository.preferencesFlow.first()
         if (prefs.defaultPlayer != ExternalPlayerTarget.INTERNAL_EXOPLAYER) {
             val launched = externalPlayerLauncher.launchExternalPlayer(
@@ -270,6 +288,22 @@ class StreamSelectionViewModel @Inject constructor(
             )
         )
         _launchPlayerEvent.send(ReadyStreamLaunchEvent(streamUrl = streamUrl, title = displayTitle))
+    }
+
+    /** Remembers the picked source so the next episode can auto-select the same one. */
+    private suspend fun rememberStreamChoice() {
+        val candidate = lastResolvedCandidate ?: return
+        if (mediaId.isBlank()) return
+        streamChoiceDao.upsert(
+            StreamChoiceEntity(
+                profileId = profileRepository.currentProfileId(),
+                mediaId = mediaId,
+                addonId = candidate.addonId,
+                bingeGroup = candidate.bingeGroup,
+                resolution = candidate.resolution,
+                updatedAtMs = System.currentTimeMillis()
+            )
+        )
     }
 
     private fun showStatus(message: String, isError: Boolean) {

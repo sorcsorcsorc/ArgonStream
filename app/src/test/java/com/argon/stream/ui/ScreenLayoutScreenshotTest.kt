@@ -6,6 +6,8 @@ import android.graphics.Canvas
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -33,7 +35,12 @@ import com.argon.stream.ui.screens.addons.AddonManagerContent
 import com.argon.stream.ui.screens.addons.AddonManagerUiState
 import com.argon.stream.core.download.DownloadItem
 import com.argon.stream.core.download.DownloadStatus
+import com.argon.stream.data.repository.Profile
+import com.argon.stream.ui.components.LocalIsTv
 import com.argon.stream.ui.navigation.ArgonBottomBar
+import com.argon.stream.ui.screens.profiles.ProfileActions
+import com.argon.stream.ui.screens.profiles.ProfilesUiState
+import com.argon.stream.ui.screens.profiles.WhoIsWatchingScreen
 import com.argon.stream.ui.navigation.TopLevelDestination
 import com.argon.stream.ui.screens.details.DetailsContent
 import com.argon.stream.ui.screens.downloads.DownloadsContent
@@ -256,6 +263,43 @@ class ScreenLayoutScreenshotTest {
     }
 
     @Test
+    fun whoIsWatching() = capture("12_who_is_watching_phone") {
+        WhoIsWatchingScreen(
+            state = ProfilesUiState(
+                ready = true,
+                profiles = listOf(Profile(1, "Me", 0, false), Profile(2, "Sarah", 4, true), Profile(3, "Kids", 3, false)),
+                activeProfileId = 1,
+                showPicker = true
+            ),
+            actions = object : ProfileActions {}
+        )
+    }
+
+    @Test
+    @Config(qualifiers = TV)
+    fun homeOnTv() = capture("13_home_tv") {
+        CompositionLocalProvider(LocalIsTv provides true) {
+            Row(modifier = Modifier.fillMaxSize()) {
+                Box(modifier = Modifier.weight(1f)) { HomeScreenSample() }
+            }
+        }
+    }
+
+    @Test
+    @Config(qualifiers = TV)
+    fun whoIsWatchingTv() = capture("14_who_is_watching_tv") {
+        WhoIsWatchingScreen(
+            state = ProfilesUiState(
+                ready = true,
+                profiles = listOf(Profile(1, "Me", 0, false), Profile(2, "Sarah", 4, true)),
+                activeProfileId = 1,
+                showPicker = true
+            ),
+            actions = object : ProfileActions {}
+        )
+    }
+
+    @Test
     @Config(qualifiers = PHONE_LANDSCAPE)
     fun playerControlsLandscape() = capture("09_player_landscape") {
         Box(modifier = Modifier.fillMaxSize().background(Color.DarkGray)) {
@@ -314,3 +358,4 @@ class ScreenLayoutScreenshotTest {
 private const val PHONE = "w393dp-h851dp-xxhdpi"
 private const val SMALL_PHONE = "w360dp-h640dp-xhdpi"
 private const val PHONE_LANDSCAPE = "w851dp-h393dp-land-xxhdpi"
+private const val TV = "w960dp-h540dp-land-television-xhdpi"

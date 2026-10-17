@@ -37,6 +37,18 @@ import com.argon.stream.domain.model.MediaType
 import com.argon.stream.domain.model.PlaybackDiagnosticError
 import com.argon.stream.domain.model.SelectableTrackInfo
 import com.argon.stream.domain.model.SubtitleScalePreset
+import com.argon.stream.core.network.NetworkResult
+import com.argon.stream.data.local.StreamChoiceDao
+import com.argon.stream.data.repository.AddonRepository
+import com.argon.stream.data.repository.CatalogRepository
+import com.argon.stream.data.repository.ProfileRepository
+import com.argon.stream.data.repository.TorBoxRepository
+import com.argon.stream.domain.model.EpisodeItem
+import com.argon.stream.domain.model.TorBoxResolutionOutcome
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.receiveAsFlow
+import java.time.LocalDate
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
@@ -73,8 +85,23 @@ data class PlayerUiState(
     val subtitlesEnabled: Boolean = true,
     val subtitleScale: SubtitleScalePreset = SubtitleScalePreset.NORMAL,
     val availableExternalPlayers: List<ExternalPlayerTarget> = emptyList(),
-    val playbackError: PlaybackDiagnosticError? = null
+    val playbackError: PlaybackDiagnosticError? = null,
+    val nextEpisode: NextEpisodeInfo? = null,
+    /** Seconds left before the next episode starts automatically; null when no countdown runs. */
+    val nextEpisodeCountdown: Int? = null,
+    val isLoadingNextEpisode: Boolean = false
 )
+
+data class NextEpisodeInfo(
+    val seasonNumber: Int,
+    val episodeNumber: Int,
+    val title: String
+)
+
+sealed interface PlayerEvent {
+    /** No remembered stream matched the next episode, so let the user pick one. */
+    data class OpenStreamPicker(val mediaType: MediaType, val mediaId: String, val videoId: String, val title: String) : PlayerEvent
+}
 
 @OptIn(UnstableApi::class)
 @HiltViewModel
@@ -86,10 +113,15 @@ class PlayerViewModel @Inject constructor(
     private val subtitleClient: StremioSubtitleClient,
     private val externalPlayerLauncher: ExternalPlayerLauncher,
     private val preferencesRepository: UserPreferencesRepository,
-    playbackSessionStore: PlaybackSessionStore
+    private val playbackSessionStore: PlaybackSessionStore,
+    private val profileRepository: ProfileRepository,
+    private val catalogRepository: CatalogRepository,
+    private val addonRepository: AddonRepository,
+    private val torBoxRepository: TorBoxRepository,
+    private val streamChoiceDao: StreamChoiceDao
 ) : ViewModel() {
 
-    private val request: PlaybackRequest = run {
+    private var request: PlaybackRequest = run {
         val argUrl = savedStateHandle.get<String>("streamUrl").orEmpty()
         playbackSessionStore.peek(argUrl) ?: PlaybackRequest(
             streamUrl = argUrl,
@@ -98,10 +130,12 @@ class PlayerViewModel @Inject constructor(
         )
     }
 
-    private val idParts = request.stremioVideoId.split(":")
-    private val seasonNumber: Int? = request.seasonNumber ?: idParts.getOrNull(1)?.toIntOrNull()
-    private val episodeNumber: Int? = request.episodeNumber ?: idParts.getOrNull(2)?.toIntOrNull()
-    private val isEpisode = seasonNumber != null && episodeNumber != null
+    private val seasonNumber: Int?
+        get() = request.seasonNumber ?: request.stremioVideoId.split(":").getOrNull(1)?.toIntOrNull()
+    private val episodeNumber: Int?
+        get() = request.episodeNumber ?: request.stremioVideoId.split(":").getOrNull(2)?.toIntOrNull()
+    private val isEpisode: Boolean
+        get() = seasonNumber != null && episodeNumber != null
 
     private val _uiState = MutableStateFlow(
         PlayerUiState(
@@ -113,6 +147,13 @@ class PlayerViewModel @Inject constructor(
         )
     )
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
+
+    private val _events = Channel<PlayerEvent>(Channel.BUFFERED)
+    val events = _events.receiveAsFlow()
+
+    private lateinit var httpFactory: OkHttpDataSource.Factory
+    private var autoPlayNextEnabled = true
+    private var countdownJob: Job? = null
 
     val exoPlayer: ExoPlayer = buildPlayer()
     private val userAttachedSubtitles = mutableListOf<ExternalSubtitleTrack>()
@@ -135,7 +176,10 @@ class PlayerViewModel @Inject constructor(
                     durationMs = exoPlayer.duration.coerceAtLeast(0L)
                 )
             }
-            if (playbackState == Player.STATE_ENDED) markFinished()
+            if (playbackState == Player.STATE_ENDED) {
+                markFinished()
+                if (autoPlayNextEnabled && _uiState.value.nextEpisode != null) startNextEpisodeCountdown()
+            }
         }
 
         override fun onVideoSizeChanged(videoSize: VideoSize) {
@@ -180,7 +224,7 @@ class PlayerViewModel @Inject constructor(
             .build()
 
         // Stream add-ons can require extra headers (behaviorHints.proxyHeaders); local subtitle files need content:// support.
-        val httpFactory = OkHttpDataSource.Factory(okHttpClient)
+        httpFactory = OkHttpDataSource.Factory(okHttpClient)
             .setDefaultRequestProperties(request.requestHeaders)
         val dataSourceFactory = DefaultDataSource.Factory(appContext, httpFactory)
 
@@ -213,25 +257,136 @@ class PlayerViewModel @Inject constructor(
                 .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, prefs.subtitlesDisabledByDefault)
                 .build()
             _uiState.update { it.copy(subtitlesEnabled = !prefs.subtitlesDisabledByDefault) }
-
-            val resumePositionMs = playbackKey()?.let { key ->
-                watchHistoryDao.getByKey(key)
-                    ?.takeIf { it.seasonNumber == seasonNumber && it.episodeNumber == episodeNumber }
-                    ?.takeIf { it.durationMs <= 0L || it.positionMs < it.durationMs * FINISHED_FRACTION }
-                    ?.positionMs
-            } ?: 0L
-
-            // Start the video right away; external subtitles are attached once discovered.
-            prepareAndPlayMedia(resumePositionMs, subtitles = emptyList())
-            exoPlayer.playWhenReady = true
-
-            val discoveredSubs = subtitleClient.querySubtitlesForVideo(request.stremioVideoId)
-            if (discoveredSubs.isNotEmpty()) {
-                _uiState.update { it.copy(externalSubtitles = discoveredSubs) }
-                reloadWithSubtitles()
-            }
+            autoPlayNextEnabled = prefs.autoPlayNextEpisode
+            startCurrentRequest()
         }
     }
+
+    /** Loads [request]: resume position, playback, external subtitles and the next-episode lookup. */
+    private suspend fun startCurrentRequest() {
+        val resumePositionMs = playbackKey()?.let { key ->
+            watchHistoryDao.getByKey(profileRepository.currentProfileId(), key)
+                ?.takeIf { it.seasonNumber == seasonNumber && it.episodeNumber == episodeNumber }
+                ?.takeIf { it.durationMs <= 0L || it.positionMs < it.durationMs * FINISHED_FRACTION }
+                ?.positionMs
+        } ?: 0L
+
+        // Start the video right away; external subtitles are attached once discovered.
+        prepareAndPlayMedia(resumePositionMs, subtitles = emptyList())
+        exoPlayer.playWhenReady = true
+
+        viewModelScope.launch { _uiState.update { it.copy(nextEpisode = findNextEpisode()) } }
+
+        val discoveredSubs = subtitleClient.querySubtitlesForVideo(request.stremioVideoId)
+        if (discoveredSubs.isNotEmpty()) {
+            _uiState.update { it.copy(externalSubtitles = discoveredSubs) }
+            reloadWithSubtitles()
+        }
+    }
+
+    // region Next episode
+
+    private suspend fun findNextEpisode(): NextEpisodeInfo? {
+        val media = request.media ?: return null
+        val season = seasonNumber ?: return null
+        val episode = episodeNumber ?: return null
+        if (media.type != MediaType.SERIES) return null
+
+        fun EpisodeItem.isAired() = airDate?.let { date ->
+            runCatching { !LocalDate.parse(date.take(10)).isAfter(LocalDate.now()) }.getOrDefault(true)
+        } ?: true
+
+        val sameSeason = (catalogRepository.getSeasonEpisodes(media.id, season) as? NetworkResult.Success)?.data.orEmpty()
+        sameSeason.filter { it.episodeNumber > episode }.minByOrNull { it.episodeNumber }?.let { next ->
+            return if (next.isAired()) NextEpisodeInfo(next.seasonNumber, next.episodeNumber, next.title) else null
+        }
+
+        val details = (catalogRepository.getMediaDetails(MediaType.SERIES, media.id) as? NetworkResult.Success)?.data ?: return null
+        val nextSeason = details.seasons.map { it.seasonNumber }.filter { it > season }.minOrNull() ?: return null
+        val first = (catalogRepository.getSeasonEpisodes(media.id, nextSeason) as? NetworkResult.Success)?.data
+            ?.minByOrNull { it.episodeNumber } ?: return null
+        return if (first.isAired()) NextEpisodeInfo(first.seasonNumber, first.episodeNumber, first.title) else null
+    }
+
+    private fun startNextEpisodeCountdown() {
+        if (countdownJob?.isActive == true) return
+        countdownJob = viewModelScope.launch {
+            for (seconds in NEXT_EPISODE_COUNTDOWN_SECONDS downTo 1) {
+                _uiState.update { it.copy(nextEpisodeCountdown = seconds) }
+                delay(1_000)
+            }
+            _uiState.update { it.copy(nextEpisodeCountdown = null) }
+            playNextEpisode()
+        }
+    }
+
+    fun cancelNextEpisodeCountdown() {
+        countdownJob?.cancel()
+        _uiState.update { it.copy(nextEpisodeCountdown = null) }
+    }
+
+    /**
+     * Plays the next episode in place. Re-uses the stream source picked last time for this show
+     * (same binge group, else same add-on and quality); otherwise opens the stream list.
+     */
+    fun playNextEpisode() {
+        countdownJob?.cancel()
+        val media = request.media ?: return
+        val next = _uiState.value.nextEpisode ?: return
+        if (_uiState.value.isLoadingNextEpisode) return
+        val imdbId = media.imdbId ?: request.stremioVideoId.substringBefore(":").takeIf { it.startsWith("tt") } ?: return
+        val nextVideoId = "$imdbId:${next.seasonNumber}:${next.episodeNumber}"
+        val nextTitle = "${media.title} S${next.seasonNumber}E${next.episodeNumber}"
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoadingNextEpisode = true, nextEpisodeCountdown = null) }
+            persistProgressNow()
+            val choice = streamChoiceDao.get(profileRepository.currentProfileId(), media.id)
+            val candidates = if (choice != null) addonRepository.queryAllAddonStreams(nextVideoId).first else emptyList()
+            val picked = choice?.let { c ->
+                candidates.firstOrNull { c.bingeGroup != null && it.bingeGroup == c.bingeGroup }
+                    ?: candidates.firstOrNull { it.addonId == c.addonId && it.resolution == c.resolution }
+                    ?: candidates.firstOrNull { it.addonId == c.addonId }
+            }
+            val outcome = picked?.let { torBoxRepository.resolveStreamCandidate(it, nextVideoId) }
+            _uiState.update { it.copy(isLoadingNextEpisode = false) }
+
+            if (picked == null || outcome !is TorBoxResolutionOutcome.ReadyToPlay) {
+                _events.send(PlayerEvent.OpenStreamPicker(MediaType.SERIES, media.id, nextVideoId, nextTitle))
+                return@launch
+            }
+
+            val nextRequest = PlaybackRequest(
+                streamUrl = outcome.resolvedStreamUrl,
+                displayTitle = nextTitle,
+                stremioVideoId = nextVideoId,
+                requestHeaders = picked.requestHeaders,
+                media = media,
+                seasonNumber = next.seasonNumber,
+                episodeNumber = next.episodeNumber
+            )
+            playbackSessionStore.put(nextRequest)
+            request = nextRequest
+            httpFactory.setDefaultRequestProperties(nextRequest.requestHeaders)
+            finishedHandled = false
+            userAttachedSubtitles.clear()
+            _uiState.update {
+                it.copy(
+                    streamUrl = nextRequest.streamUrl,
+                    subtitle = "Season ${next.seasonNumber} · Episode ${next.episodeNumber}",
+                    stremioVideoId = nextVideoId,
+                    nextEpisode = null,
+                    externalSubtitles = emptyList(),
+                    playbackError = null,
+                    isEnded = false,
+                    isBuffering = true
+                )
+            }
+            startCurrentRequest()
+        }
+    }
+
+    // endregion
 
     private fun prepareAndPlayMedia(resumePositionMs: Long, subtitles: List<ExternalSubtitleTrack>) {
         val subtitleConfigs = subtitles.map { sub ->
@@ -476,6 +631,7 @@ class PlayerViewModel @Inject constructor(
         val media = request.media
         val baseId = key.substringAfter(':')
         val entity = WatchHistoryEntity(
+            profileId = profileRepository.currentProfileId(),
             playbackKey = key,
             mediaId = baseId,
             tmdbId = media?.tmdbId,
@@ -500,7 +656,14 @@ class PlayerViewModel @Inject constructor(
         if (finishedHandled) return
         finishedHandled = true
         val key = playbackKey() ?: return
-        persistScope.launch { watchHistoryDao.removeWatchProgress(key) }
+        val profileId = profileRepository.currentProfileId()
+        val baseId = key.substringAfter(':')
+        val season = seasonNumber ?: 0
+        val episode = episodeNumber ?: 0
+        persistScope.launch {
+            watchHistoryDao.removeWatchProgress(profileId, key)
+            catalogRepository.setWatched(baseId, season, episode, watched = true)
+        }
     }
 
     override fun onCleared() {
@@ -512,6 +675,7 @@ class PlayerViewModel @Inject constructor(
 
     companion object {
         const val SEEK_STEP_MS = 10_000L
+        private const val NEXT_EPISODE_COUNTDOWN_SECONDS = 8
         private const val MIN_POSITION_TO_SAVE_MS = 15_000L
         private const val FINISHED_FRACTION = 0.94
 

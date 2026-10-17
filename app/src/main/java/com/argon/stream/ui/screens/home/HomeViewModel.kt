@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.argon.stream.core.network.NetworkResult
 import com.argon.stream.data.repository.CatalogRepository
+import com.argon.stream.data.repository.Profile
+import com.argon.stream.data.repository.ProfileRepository
 import com.argon.stream.domain.model.CatalogRow
 import com.argon.stream.domain.model.MediaItem
 import com.argon.stream.domain.model.MediaType
@@ -13,6 +15,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -24,12 +27,14 @@ data class HomeUiState(
     val continueWatching: List<WatchProgressItem> = emptyList(),
     val catalogRows: List<CatalogRow> = emptyList(),
     val isTmdbConfigured: Boolean = false,
+    val activeProfile: Profile? = null,
     val errorMessage: String? = null
 )
 
 @HiltViewModel
 class HomeViewModel @Inject constructor(
-    private val catalogRepository: CatalogRepository
+    private val catalogRepository: CatalogRepository,
+    private val profileRepository: ProfileRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(HomeUiState())
@@ -44,8 +49,15 @@ class HomeViewModel @Inject constructor(
                 _uiState.update { it.copy(continueWatching = items) }
             }
         }
+        viewModelScope.launch {
+            combine(profileRepository.profiles, profileRepository.activeProfileId) { profiles, id ->
+                profiles.firstOrNull { it.id == id }
+            }.collect { profile -> _uiState.update { it.copy(activeProfile = profile) } }
+        }
         refreshCatalogs()
     }
+
+    fun switchProfile() = profileRepository.requestSwitch()
 
     /** Reloads when the catalog source changed (e.g. a TMDB key was added in Settings). */
     fun onScreenVisible() {

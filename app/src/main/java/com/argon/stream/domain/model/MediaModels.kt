@@ -64,7 +64,9 @@ data class MediaDetails(
     val cast: List<CastMember>,
     val seasons: List<SeasonSummary>,
     val isInWatchlist: Boolean = false,
-    val isFavorite: Boolean = false
+    val isFavorite: Boolean = false,
+    /** YouTube video id of the main trailer, if known. */
+    val trailerYoutubeId: String? = null
 )
 
 @Serializable

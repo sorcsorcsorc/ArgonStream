@@ -27,6 +27,8 @@ data class TitleDetailsUiState(
     val episodesError: String? = null,
     val isInWatchlist: Boolean = false,
     val isFavorite: Boolean = false,
+    /** Watched marks as (season, episode); a movie uses (0, 0). */
+    val watched: Set<Pair<Int, Int>> = emptySet(),
     val errorMessage: String? = null
 )
 
@@ -49,8 +51,13 @@ class TitleDetailsViewModel @Inject constructor(
         viewModelScope.launch {
             catalogRepository.observeWatchlistEntry(mediaId).collectLatest { entry ->
                 _uiState.update {
-                    it.copy(isInWatchlist = entry != null, isFavorite = entry?.isFavorite == true)
+                    it.copy(isInWatchlist = entry?.isInWatchlist == true, isFavorite = entry?.isFavorite == true)
                 }
+            }
+        }
+        viewModelScope.launch {
+            catalogRepository.observeWatched(mediaId).collectLatest { marks ->
+                _uiState.update { it.copy(watched = marks) }
             }
         }
         loadDetails()
@@ -98,11 +105,16 @@ class TitleDetailsViewModel @Inject constructor(
 
     fun toggleWatchlist() {
         val item = _uiState.value.details?.item ?: return
-        viewModelScope.launch { catalogRepository.toggleWatchlist(item, markFavorite = false) }
+        viewModelScope.launch { catalogRepository.toggleWatchlist(item) }
     }
 
     fun toggleFavorite() {
         val item = _uiState.value.details?.item ?: return
-        viewModelScope.launch { catalogRepository.toggleWatchlist(item, markFavorite = true) }
+        viewModelScope.launch { catalogRepository.toggleFavorite(item) }
+    }
+
+    fun toggleWatched(season: Int, episode: Int) {
+        val isWatched = (season to episode) in _uiState.value.watched
+        viewModelScope.launch { catalogRepository.setWatched(mediaId, season, episode, !isWatched) }
     }
 }

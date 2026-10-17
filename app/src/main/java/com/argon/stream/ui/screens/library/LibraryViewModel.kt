@@ -26,12 +26,12 @@ class LibraryViewModel @Inject constructor(
 
     val uiState: StateFlow<LibraryUiState> = combine(
         catalogRepository.observeWatchlist(),
+        catalogRepository.observeFavorites(),
         catalogRepository.observeContinueWatching()
-    ) { watchlistEntities, historyItems ->
-        val mapped = watchlistEntities.map { it.toMediaItem() }
+    ) { watchlist, favorites, historyItems ->
         LibraryUiState(
-            watchlist = mapped,
-            favorites = watchlistEntities.filter { it.isFavorite }.map { it.toMediaItem() },
+            watchlist = watchlist.map { it.toMediaItem() },
+            favorites = favorites.map { it.toMediaItem() },
             history = historyItems
         )
     }.stateIn(

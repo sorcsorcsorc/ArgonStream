@@ -12,11 +12,15 @@ import com.argon.stream.core.network.RedactingLoggingInterceptor
 import com.argon.stream.core.player.ExternalPlayerLauncher
 import com.argon.stream.core.security.SecretVault
 import com.argon.stream.data.local.AddonDao
+import com.argon.stream.data.local.ProfileDao
+import com.argon.stream.data.local.StreamChoiceDao
+import com.argon.stream.data.local.WatchedDao
 import com.argon.stream.data.local.UserPreferencesRepository
 import com.argon.stream.data.local.WatchHistoryDao
 import com.argon.stream.data.local.WatchlistDao
 import com.argon.stream.data.repository.BackupRepository
 import com.argon.stream.data.repository.CatalogRepository
+import com.argon.stream.data.repository.ProfileRepository
 import com.argon.stream.data.repository.TorBoxRepository
 import com.argon.stream.domain.model.ArgonPreferences
 import com.argon.stream.domain.model.ExternalPlayerTarget
@@ -27,6 +31,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -45,7 +50,9 @@ data class SettingsUiState(
     val statusMessage: String? = null,
     val isError: Boolean = false,
     val recentDiagnostics: List<DiagnosticLogEntry> = emptyList(),
-    val crashLog: String? = null
+    val crashLog: String? = null,
+    val activeProfileName: String = "",
+    val profileCount: Int = 1
 )
 
 @HiltViewModel
@@ -60,6 +67,10 @@ class SettingsViewModel @Inject constructor(
     private val secretVault: SecretVault,
     private val loggingInterceptor: RedactingLoggingInterceptor,
     private val backupRepository: BackupRepository,
+    private val profileRepository: ProfileRepository,
+    private val profileDao: ProfileDao,
+    private val watchedDao: WatchedDao,
+    private val streamChoiceDao: StreamChoiceDao,
     externalPlayerLauncher: ExternalPlayerLauncher
 ) : ViewModel(), SettingsActions {
 
@@ -79,6 +90,11 @@ class SettingsViewModel @Inject constructor(
             preferencesRepository.preferencesFlow.collect { prefs ->
                 _uiState.update { it.copy(preferences = prefs) }
             }
+        }
+        viewModelScope.launch {
+            combine(profileRepository.profiles, profileRepository.activeProfileId) { profiles, id ->
+                (profiles.firstOrNull { it.id == id }?.name ?: "") to profiles.size
+            }.collect { (name, count) -> _uiState.update { it.copy(activeProfileName = name, profileCount = count) } }
         }
         if (torBoxRepository.hasApiKey()) {
             testTorBoxConnection(showStatus = false)
@@ -222,6 +238,20 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    override fun setAutoPlayNext(enabled: Boolean) {
+        val prefs = _uiState.value.preferences
+        viewModelScope.launch {
+            preferencesRepository.updateStreamFilters(
+                maxResolution = prefs.preferredMaxResolution,
+                preferCached = prefs.preferCachedDebridStreams,
+                excludedCodecsCsv = prefs.excludedCodecsCsv,
+                autoPlayNext = enabled
+            )
+        }
+    }
+
+    override fun switchProfile() = profileRepository.requestSwitch()
+
     override fun setDarkTheme(enabled: Boolean) {
         viewModelScope.launch { preferencesRepository.updateTheme(enabled, _uiState.value.preferences.dynamicColors) }
     }
@@ -249,8 +279,10 @@ class SettingsViewModel @Inject constructor(
 
     override fun clearWatchHistory() {
         viewModelScope.launch {
-            watchHistoryDao.clearAll()
-            showStatus("Watch history and Continue Watching cleared.")
+            val profileId = profileRepository.currentProfileId()
+            watchHistoryDao.clearForProfile(profileId)
+            watchedDao.clearForProfile(profileId)
+            showStatus("Watch history, Continue Watching and watched marks cleared for this profile.")
         }
     }
 
@@ -259,6 +291,10 @@ class SettingsViewModel @Inject constructor(
             secretVault.clearAll()
             watchHistoryDao.clearAll()
             watchlistDao.clearAll()
+            watchedDao.clearAll()
+            streamChoiceDao.clearAll()
+            profileDao.clearAll()
+            profileRepository.ensureProfileExists()
             addonDao.clearAll()
             preferencesRepository.resetAllPreferences()
             loggingInterceptor.clearLogs()

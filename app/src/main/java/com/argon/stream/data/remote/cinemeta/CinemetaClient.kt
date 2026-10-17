@@ -41,7 +41,14 @@ data class CinemetaMetaDto(
     val genres: List<String>? = null,
     val genre: List<String>? = null,
     val cast: List<String>? = null,
-    val videos: List<CinemetaVideoDto>? = null
+    val videos: List<CinemetaVideoDto>? = null,
+    val trailers: List<CinemetaTrailerDto>? = null
+)
+
+@Serializable
+data class CinemetaTrailerDto(
+    val source: String? = null,
+    val type: String? = null
 )
 
 @Serializable

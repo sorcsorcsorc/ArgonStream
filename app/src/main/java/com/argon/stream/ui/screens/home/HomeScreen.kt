@@ -56,7 +56,9 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
+import com.argon.stream.data.repository.Profile
 import com.argon.stream.domain.model.CatalogRow
+import com.argon.stream.ui.screens.profiles.ProfileAvatar
 import com.argon.stream.domain.model.MediaItem
 import com.argon.stream.domain.model.MediaType
 import com.argon.stream.ui.components.EmptyState
@@ -81,7 +83,8 @@ fun HomeScreen(
         onOpenSettings = onOpenSettings,
         onOpenSearch = onOpenSearch,
         onSetFilter = viewModel::setFilter,
-        onRetry = viewModel::refreshCatalogs
+        onRetry = viewModel::refreshCatalogs,
+        onSwitchProfile = viewModel::switchProfile
     )
 }
 
@@ -92,7 +95,8 @@ internal fun HomeContent(
     onOpenSettings: () -> Unit,
     onOpenSearch: () -> Unit,
     onSetFilter: (MediaType?) -> Unit,
-    onRetry: () -> Unit
+    onRetry: () -> Unit,
+    onSwitchProfile: () -> Unit = {}
 ) {
     val cardWidth = rememberPosterCardWidth()
     var tipDismissed by rememberSaveable { mutableStateOf(false) }
@@ -108,12 +112,14 @@ internal fun HomeContent(
                 FeaturedHeroBanner(
                     item = hero,
                     onOpen = { onOpenMediaDetails(hero) },
-                    onSearch = onOpenSearch
+                    onSearch = onOpenSearch,
+                    profile = state.activeProfile,
+                    onSwitchProfile = onSwitchProfile
                 )
             }
         } else {
             item(key = "header") {
-                HomeTopBar(onSearch = onOpenSearch)
+                HomeTopBar(onSearch = onOpenSearch, profile = state.activeProfile, onSwitchProfile = onSwitchProfile)
             }
         }
 
@@ -220,7 +226,7 @@ fun rememberPosterCardWidth(): Dp {
 }
 
 @Composable
-private fun HomeTopBar(onSearch: () -> Unit) {
+private fun HomeTopBar(onSearch: () -> Unit, profile: Profile?, onSwitchProfile: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -238,6 +244,7 @@ private fun HomeTopBar(onSearch: () -> Unit) {
         IconButton(onClick = onSearch) {
             Icon(Icons.Default.Search, contentDescription = "Search")
         }
+        ProfileButton(profile, onSwitchProfile)
     }
 }
 
@@ -245,7 +252,9 @@ private fun HomeTopBar(onSearch: () -> Unit) {
 private fun FeaturedHeroBanner(
     item: MediaItem,
     onOpen: () -> Unit,
-    onSearch: () -> Unit
+    onSearch: () -> Unit,
+    profile: Profile?,
+    onSwitchProfile: () -> Unit
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
         val isWide = maxWidth > 600.dp
@@ -296,6 +305,7 @@ private fun FeaturedHeroBanner(
                 ) {
                     Icon(Icons.Default.Search, contentDescription = "Search")
                 }
+                ProfileButton(profile, onSwitchProfile)
             }
 
             Column(
@@ -331,6 +341,14 @@ private fun FeaturedHeroBanner(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ProfileButton(profile: Profile?, onClick: () -> Unit) {
+    if (profile == null) return
+    IconButton(onClick = onClick) {
+        ProfileAvatar(name = profile.name, colorIndex = profile.colorIndex, size = 30.dp)
     }
 }
 

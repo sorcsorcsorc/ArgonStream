@@ -44,7 +44,21 @@ data class TmdbDetailsDto(
     val genres: List<TmdbGenreDto> = emptyList(),
     val seasons: List<TmdbSeasonDto> = emptyList(),
     @SerialName("external_ids") val externalIds: TmdbExternalIdsDto? = null,
-    val credits: TmdbCreditsDto? = null
+    val credits: TmdbCreditsDto? = null,
+    val videos: TmdbVideosDto? = null
+)
+
+@Serializable
+data class TmdbVideosDto(
+    val results: List<TmdbVideoDto> = emptyList()
+)
+
+@Serializable
+data class TmdbVideoDto(
+    val key: String = "",
+    val site: String = "",
+    val type: String = "",
+    val official: Boolean = false
 )
 
 @Serializable

@@ -46,6 +46,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.argon.stream.core.download.DownloadItem
 import com.argon.stream.core.download.DownloadStatus
 import com.argon.stream.ui.components.EmptyState
+import com.argon.stream.ui.components.focusHighlight
 import com.argon.stream.ui.components.ScreenHeader
 import java.util.Locale
 
@@ -148,6 +149,7 @@ private fun DownloadRow(
         shape = RoundedCornerShape(14.dp),
         modifier = Modifier
             .fillMaxWidth()
+            .focusHighlight(RoundedCornerShape(14.dp))
             .clickable(enabled = isDone, onClick = onPlay)
     ) {
         Row(

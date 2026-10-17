@@ -11,13 +11,17 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSizeClassApi
 import androidx.compose.material3.windowsizeclass.calculateWindowSizeClass
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.argon.stream.core.player.PictureInPictureState
 import com.argon.stream.core.player.tryEnterPictureInPicture
 import com.argon.stream.data.local.UserPreferencesRepository
 import com.argon.stream.domain.model.ArgonPreferences
+import com.argon.stream.ui.components.LocalIsTv
+import com.argon.stream.ui.components.isTelevision
 import com.argon.stream.ui.navigation.ArgonNavHost
 import com.argon.stream.ui.theme.ArgonTheme
 import dagger.hilt.android.AndroidEntryPoint
@@ -55,8 +59,11 @@ class MainActivity : ComponentActivity() {
                 darkTheme = darkTheme,
                 dynamicColor = prefs.dynamicColors
             ) {
-                Surface(color = MaterialTheme.colorScheme.background) {
-                    ArgonNavHost(windowSizeClass = windowSizeClass)
+                val isTv = remember { isTelevision() }
+                CompositionLocalProvider(LocalIsTv provides isTv) {
+                    Surface(color = MaterialTheme.colorScheme.background) {
+                        ArgonNavHost(windowSizeClass = windowSizeClass)
+                    }
                 }
             }
         }

@@ -7,6 +7,9 @@ import com.argon.stream.core.network.RedactingLoggingInterceptor
 import com.argon.stream.core.network.TmdbAuthInterceptor
 import com.argon.stream.data.local.AddonDao
 import com.argon.stream.data.local.ArgonDatabase
+import com.argon.stream.data.local.ProfileDao
+import com.argon.stream.data.local.StreamChoiceDao
+import com.argon.stream.data.local.WatchedDao
 import com.argon.stream.data.local.WatchHistoryDao
 import com.argon.stream.data.local.WatchlistDao
 import com.argon.stream.data.remote.tmdb.TmdbApiService
@@ -97,8 +100,20 @@ object AppModule {
             context,
             ArgonDatabase::class.java,
             "argon_stream.db"
-        ).fallbackToDestructiveMigration(dropAllTables = true).build()
+        )
+            .addMigrations(ArgonDatabase.MIGRATION_1_2)
+            .fallbackToDestructiveMigration(dropAllTables = true)
+            .build()
     }
+
+    @Provides
+    fun provideProfileDao(db: ArgonDatabase): ProfileDao = db.profileDao()
+
+    @Provides
+    fun provideWatchedDao(db: ArgonDatabase): WatchedDao = db.watchedDao()
+
+    @Provides
+    fun provideStreamChoiceDao(db: ArgonDatabase): StreamChoiceDao = db.streamChoiceDao()
 
     @Provides
     fun provideWatchHistoryDao(db: ArgonDatabase): WatchHistoryDao = db.watchHistoryDao()

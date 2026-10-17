@@ -6,6 +6,10 @@
     <!-- Lets downloads run without the system progress notification (it buzzes on some phones); normal permission, no prompt -->
     <uses-permission android:name="android.permission.DOWNLOAD_WITHOUT_NOTIFICATION" />
 
+    <!-- Android TV / Google TV / Fire TV: the app also runs without a touch screen -->
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-feature android:name="android.software.leanback" android:required="false" />
+
     <!-- Needed in Phase 5 for discovering installed External Players (VLC, Just Player, MX) on Android 11+ -->
     <queries>
         <intent>
@@ -21,6 +25,7 @@
     <application
         android:name=".ArgonApp"
         android:allowBackup="false"
+        android:banner="@drawable/tv_banner"
         android:enableOnBackInvokedCallback="true"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -39,6 +44,7 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
         </activity>
     </application>

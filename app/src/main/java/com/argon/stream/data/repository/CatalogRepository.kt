@@ -4,6 +4,8 @@ import com.argon.stream.core.network.NetworkResult
 import com.argon.stream.core.network.safeApiCall
 import com.argon.stream.core.security.SecretVault
 import com.argon.stream.data.local.WatchHistoryDao
+import com.argon.stream.data.local.WatchedDao
+import com.argon.stream.data.local.WatchedEntity
 import com.argon.stream.data.local.WatchlistDao
 import com.argon.stream.data.local.WatchlistEntity
 import com.argon.stream.data.remote.cinemeta.CinemetaClient
@@ -22,7 +24,9 @@ import com.argon.stream.domain.model.SeasonSummary
 import com.argon.stream.domain.model.WatchProgressItem
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
@@ -37,6 +41,7 @@ import javax.inject.Singleton
  * Both id styles are accepted by [getMediaDetails], so Continue Watching and Watchlist
  * entries keep working when the user adds or removes a TMDB key later.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 @Singleton
 class CatalogRepository @Inject constructor(
     private val tmdbApi: TmdbApiService,
@@ -44,8 +49,12 @@ class CatalogRepository @Inject constructor(
     private val wikipediaPhotos: WikipediaPhotoClient,
     private val watchHistoryDao: WatchHistoryDao,
     private val watchlistDao: WatchlistDao,
+    private val watchedDao: WatchedDao,
+    private val profileRepository: ProfileRepository,
     private val secretVault: SecretVault
 ) {
+    private val profileId: Long get() = profileRepository.currentProfileId()
+
     private val detailsMemoryCache = ConcurrentHashMap<String, MediaDetails>()
     private val cinemetaMetaCache = ConcurrentHashMap<String, CinemetaMetaDto>()
 
@@ -71,7 +80,7 @@ class CatalogRepository @Inject constructor(
         secretVault.getSecret(SecretVault.KEY_TMDB_API_KEY)?.takeIf { it.isNotBlank() }
 
     fun observeContinueWatching(): Flow<List<WatchProgressItem>> {
-        return watchHistoryDao.observeContinueWatching().map { entities ->
+        return profileRepository.activeProfileId.flatMapLatest { watchHistoryDao.observeContinueWatching(it) }.map { entities ->
             entities.map { entity ->
                 WatchProgressItem(
                     mediaItem = MediaItem(
@@ -97,31 +106,58 @@ class CatalogRepository @Inject constructor(
         }
     }
 
-    fun observeWatchlist(): Flow<List<WatchlistEntity>> = watchlistDao.observeWatchlist()
+    fun observeWatchlist(): Flow<List<WatchlistEntity>> =
+        profileRepository.activeProfileId.flatMapLatest { watchlistDao.observeWatchlist(it) }
+
+    fun observeFavorites(): Flow<List<WatchlistEntity>> =
+        profileRepository.activeProfileId.flatMapLatest { watchlistDao.observeFavorites(it) }
 
     fun observeWatchlistEntry(mediaId: String): Flow<WatchlistEntity?> =
-        watchlistDao.observeItem(mediaId)
+        profileRepository.activeProfileId.flatMapLatest { watchlistDao.observeItem(it, mediaId) }
 
-    suspend fun toggleWatchlist(item: MediaItem, markFavorite: Boolean = false) {
-        val existing = watchlistDao.getItem(item.id)
-        if (existing != null && !markFavorite) {
-            watchlistDao.remove(item.id)
-        } else {
-            watchlistDao.upsert(
-                WatchlistEntity(
-                    mediaId = item.id,
-                    tmdbId = item.tmdbId,
-                    imdbId = item.imdbId,
-                    title = item.title,
-                    mediaType = item.type,
-                    posterUrl = item.posterUrl,
-                    backdropUrl = item.backdropUrl,
-                    releaseYear = item.releaseYear,
-                    rating = item.rating,
-                    isFavorite = if (markFavorite) !(existing?.isFavorite ?: false) else (existing?.isFavorite ?: false),
-                    addedAtMs = existing?.addedAtMs ?: System.currentTimeMillis()
-                )
+    /** Watchlist ("saved") and favorite are independent; a row is removed only when both are off. */
+    suspend fun toggleWatchlist(item: MediaItem) = updateSavedFlags(item) { saved, fav -> !saved to fav }
+
+    suspend fun toggleFavorite(item: MediaItem) = updateSavedFlags(item) { saved, fav -> saved to !fav }
+
+    private suspend fun updateSavedFlags(item: MediaItem, change: (Boolean, Boolean) -> Pair<Boolean, Boolean>) {
+        val pid = profileId
+        val existing = watchlistDao.getItem(pid, item.id)
+        val (saved, favorite) = change(existing?.isInWatchlist == true, existing?.isFavorite == true)
+        if (!saved && !favorite) {
+            watchlistDao.remove(pid, item.id)
+            return
+        }
+        watchlistDao.upsert(
+            WatchlistEntity(
+                profileId = pid,
+                mediaId = item.id,
+                tmdbId = item.tmdbId,
+                imdbId = item.imdbId,
+                title = item.title,
+                mediaType = item.type,
+                posterUrl = item.posterUrl,
+                backdropUrl = item.backdropUrl,
+                releaseYear = item.releaseYear,
+                rating = item.rating,
+                isInWatchlist = saved,
+                isFavorite = favorite,
+                addedAtMs = existing?.addedAtMs ?: System.currentTimeMillis()
             )
+        )
+    }
+
+    /** Watched marks for a title as (season, episode) pairs; movies use (0, 0). */
+    fun observeWatched(mediaId: String): Flow<Set<Pair<Int, Int>>> =
+        profileRepository.activeProfileId
+            .flatMapLatest { watchedDao.observeForMedia(it, mediaId) }
+            .map { rows -> rows.map { it.seasonNumber to it.episodeNumber }.toSet() }
+
+    suspend fun setWatched(mediaId: String, season: Int, episode: Int, watched: Boolean) {
+        if (watched) {
+            watchedDao.upsert(WatchedEntity(profileId, mediaId, season, episode, System.currentTimeMillis()))
+        } else {
+            watchedDao.remove(profileId, mediaId, season, episode)
         }
     }
 
@@ -256,8 +292,8 @@ class CatalogRepository @Inject constructor(
     }
 
     private suspend fun MediaDetails.withWatchlistState(): MediaDetails {
-        val wl = watchlistDao.getItem(item.id)
-        return copy(isInWatchlist = wl != null, isFavorite = wl?.isFavorite == true)
+        val wl = watchlistDao.getItem(profileId, item.id)
+        return copy(isInWatchlist = wl?.isInWatchlist == true, isFavorite = wl?.isFavorite == true)
     }
 
     private suspend fun loadTmdbDetails(
@@ -309,7 +345,10 @@ class CatalogRepository @Inject constructor(
                         status = meta.status,
                         tagline = tmdbExtras?.tagline,
                         cast = cast,
-                        seasons = seasons
+                        seasons = seasons,
+                        trailerYoutubeId = tmdbExtras?.trailerYoutubeId
+                            ?: meta.trailers.orEmpty().firstOrNull { it.type.equals("Trailer", true) && !it.source.isNullOrBlank() }?.source
+                            ?: meta.trailers.orEmpty().firstOrNull { !it.source.isNullOrBlank() }?.source
                     )
                 )
             }
@@ -482,7 +521,11 @@ class CatalogRepository @Inject constructor(
                         posterUrl = s.posterPath?.let { "${TmdbApiService.IMAGE_W500}$it" },
                         airDate = s.airDate
                     )
-                }
+                },
+            trailerYoutubeId = videos?.results.orEmpty()
+                .filter { it.site.equals("YouTube", true) && it.key.isNotBlank() }
+                .sortedWith(compareByDescending<com.argon.stream.data.remote.tmdb.TmdbVideoDto> { it.type == "Trailer" }.thenByDescending { it.official })
+                .firstOrNull()?.key
         )
     }
 

@@ -94,6 +94,8 @@ interface SettingsActions {
     fun exportBackupTo(uri: Uri) {}
     fun importBackupFrom(uri: Uri) {}
     fun clearCrashLog() {}
+    fun setAutoPlayNext(enabled: Boolean) {}
+    fun switchProfile() {}
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -190,6 +192,18 @@ internal fun SettingsContent(
             }
         }
 
+        item(key = "profile") {
+            SectionCard(
+                title = "Profile",
+                subtitle = if (state.profileCount > 1) "Watching as ${state.activeProfileName}. Each profile has its own watchlist and history."
+                else "Add profiles so everyone at home gets their own watchlist and history."
+            ) {
+                OutlinedButton(onClick = actions::switchProfile) {
+                    Text(if (state.profileCount > 1) "Switch or manage profiles" else "Add or manage profiles")
+                }
+            }
+        }
+
         item(key = "tmdb") {
             SectionCard(
                 title = "TMDB (optional)",
@@ -282,6 +296,11 @@ internal fun SettingsContent(
                         )
                     }
                 }
+                SwitchRow(
+                    title = "Autoplay next episode",
+                    checked = prefs.autoPlayNextEpisode,
+                    onCheckedChange = actions::setAutoPlayNext
+                )
                 SwitchRow(
                     title = "Subtitles off by default",
                     checked = prefs.subtitlesDisabledByDefault,

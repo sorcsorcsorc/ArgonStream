@@ -58,6 +58,7 @@ object StreamMetadataParser {
             languages = detectLanguages(combinedText),
             requestHeaders = headers,
             filenameHint = dto.behaviorHints?.filename,
+            bingeGroup = dto.behaviorHints?.bingeGroup,
             isCachedOnDebrid = isCached
         )
     }

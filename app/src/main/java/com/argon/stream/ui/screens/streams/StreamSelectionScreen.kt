@@ -61,6 +61,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.argon.stream.domain.model.StreamCandidate
 import com.argon.stream.ui.components.EmptyState
+import com.argon.stream.ui.components.focusHighlight
 import com.argon.stream.ui.components.ScreenHeader
 import java.util.Locale
 
@@ -355,6 +356,7 @@ private fun StreamList(
         items(state.streams, key = { it.uniqueKey }) { candidate ->
             StreamCandidateCard(
                 candidate = candidate,
+                isLastUsed = candidate.uniqueKey == state.lastUsedKey,
                 enabled = !state.isResolving,
                 onClick = { onSelectStream(candidate) },
                 onDownload = { onDownloadStream(candidate) }
@@ -367,6 +369,7 @@ private fun StreamList(
 @Composable
 private fun StreamCandidateCard(
     candidate: StreamCandidate,
+    isLastUsed: Boolean,
     enabled: Boolean,
     onClick: () -> Unit,
     onDownload: () -> Unit
@@ -376,6 +379,7 @@ private fun StreamCandidateCard(
         shape = RoundedCornerShape(14.dp),
         modifier = Modifier
             .fillMaxWidth()
+            .focusHighlight(RoundedCornerShape(14.dp))
             .clickable(enabled = enabled, onClick = onClick)
     ) {
         Row(
@@ -398,6 +402,13 @@ private fun StreamCandidateCard(
                             container = MaterialTheme.colorScheme.tertiaryContainer,
                             content = MaterialTheme.colorScheme.onTertiaryContainer,
                             showBolt = true
+                        )
+                    }
+                    if (isLastUsed) {
+                        Badge(
+                            text = "Last used",
+                            container = MaterialTheme.colorScheme.secondaryContainer,
+                            content = MaterialTheme.colorScheme.onSecondaryContainer
                         )
                     }
                     candidate.hdrTag?.let {

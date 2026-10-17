@@ -1,5 +1,8 @@
 package com.argon.stream.ui.screens.details
 
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -29,6 +32,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.CheckCircleOutline
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
@@ -43,6 +48,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -60,6 +66,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -71,6 +78,7 @@ import com.argon.stream.domain.model.EpisodeItem
 import com.argon.stream.domain.model.MediaDetails
 import com.argon.stream.domain.model.MediaType
 import com.argon.stream.ui.components.EmptyState
+import com.argon.stream.ui.components.focusHighlight
 import java.time.LocalDate
 import java.util.Locale
 
@@ -113,7 +121,8 @@ fun TitleDetailsScreen(
             onSelectStreams = onSelectStreams,
             onToggleWatchlist = viewModel::toggleWatchlist,
             onToggleFavorite = viewModel::toggleFavorite,
-            onSelectSeason = viewModel::selectSeason
+            onSelectSeason = viewModel::selectSeason,
+            onToggleWatched = viewModel::toggleWatched
         )
     }
 }
@@ -141,8 +150,10 @@ internal fun DetailsContent(
     onSelectStreams: (String, String) -> Unit,
     onToggleWatchlist: () -> Unit,
     onToggleFavorite: () -> Unit,
-    onSelectSeason: (Int) -> Unit
+    onSelectSeason: (Int) -> Unit,
+    onToggleWatched: (season: Int, episode: Int) -> Unit = { _, _ -> }
 ) {
+    val context = LocalContext.current
     val item = details.item
     val imdbId = item.imdbId ?: item.id.takeIf { it.startsWith("tt") }
 
@@ -229,41 +240,49 @@ internal fun DetailsContent(
                 modifier = Modifier.padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (item.type == MediaType.MOVIE) {
-                        Button(
-                            onClick = { imdbId?.let { onSelectStreams(it, item.title) } },
-                            enabled = imdbId != null,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(Icons.Default.PlayArrow, contentDescription = null)
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Find streams")
-                        }
-                        OutlinedIconToggleButton(checked = state.isInWatchlist, onCheckedChange = { onToggleWatchlist() }) {
-                            Icon(
-                                imageVector = if (state.isInWatchlist) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                                contentDescription = if (state.isInWatchlist) "Remove from watchlist" else "Add to watchlist"
-                            )
-                        }
-                    } else {
-                        OutlinedButton(onClick = onToggleWatchlist, modifier = Modifier.weight(1f)) {
-                            Icon(
-                                imageVector = if (state.isInWatchlist) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                                contentDescription = null
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(if (state.isInWatchlist) "In watchlist" else "Add to watchlist")
-                        }
+                if (item.type == MediaType.MOVIE) {
+                    Button(
+                        onClick = { imdbId?.let { onSelectStreams(it, item.title) } },
+                        enabled = imdbId != null,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = null)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Find streams")
                     }
-                    OutlinedIconToggleButton(checked = state.isFavorite, onCheckedChange = { onToggleFavorite() }) {
-                        Icon(
-                            imageVector = if (state.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                            contentDescription = if (state.isFavorite) "Remove from favorites" else "Add to favorites",
-                            tint = if (state.isFavorite) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                }
+
+                // Watchlist and Favorite are separate: either, both or neither can be on.
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    DetailAction(
+                        label = "Watchlist",
+                        icon = if (state.isInWatchlist) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                        active = state.isInWatchlist,
+                        onClick = onToggleWatchlist
+                    )
+                    DetailAction(
+                        label = "Favorite",
+                        icon = if (state.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                        active = state.isFavorite,
+                        activeTint = MaterialTheme.colorScheme.error,
+                        onClick = onToggleFavorite
+                    )
+                    if (item.type == MediaType.MOVIE) {
+                        val watched = (0 to 0) in state.watched
+                        DetailAction(
+                            label = if (watched) "Watched" else "Mark watched",
+                            icon = if (watched) Icons.Default.CheckCircle else Icons.Default.CheckCircleOutline,
+                            active = watched,
+                            activeTint = MaterialTheme.colorScheme.tertiary,
+                            onClick = { onToggleWatched(0, 0) }
+                        )
+                    }
+                    details.trailerYoutubeId?.let { videoId ->
+                        DetailAction(
+                            label = "Trailer",
+                            icon = Icons.Default.Movie,
+                            active = false,
+                            onClick = { openTrailer(context, videoId) }
                         )
                     }
                 }
@@ -383,6 +402,8 @@ internal fun DetailsContent(
                     EpisodeRowItem(
                         episode = ep,
                         enabled = imdbId != null,
+                        watched = (ep.seasonNumber to ep.episodeNumber) in state.watched,
+                        onToggleWatched = { onToggleWatched(ep.seasonNumber, ep.episodeNumber) },
                         onClick = {
                             imdbId?.let {
                                 onSelectStreams(
@@ -511,6 +532,8 @@ private fun CastCard(member: CastMember) {
 private fun EpisodeRowItem(
     episode: EpisodeItem,
     enabled: Boolean,
+    watched: Boolean,
+    onToggleWatched: () -> Unit,
     onClick: () -> Unit
 ) {
     val isUpcoming = episode.airDate?.let { date ->
@@ -520,6 +543,7 @@ private fun EpisodeRowItem(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .focusHighlight()
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -578,5 +602,47 @@ private fun EpisodeRowItem(
                 )
             }
         }
+        IconButton(onClick = onToggleWatched) {
+            Icon(
+                imageVector = if (watched) Icons.Default.CheckCircle else Icons.Default.CheckCircleOutline,
+                contentDescription = if (watched) "Mark as unwatched" else "Mark as watched",
+                tint = if (watched) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
+}
+
+/** Icon over a short label, used for the Watchlist / Favorite / Watched / Trailer actions. */
+@Composable
+private fun DetailAction(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    active: Boolean,
+    onClick: () -> Unit,
+    activeTint: Color = MaterialTheme.colorScheme.primary
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .focusHighlight()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 8.dp)
+    ) {
+        Icon(icon, contentDescription = null, tint = if (active) activeTint else MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = if (active) activeTint else MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1
+        )
+    }
+}
+
+/** Opens the trailer in the YouTube app (phone or TV) or the browser. */
+private fun openTrailer(context: Context, youtubeId: String) {
+    val app = Intent(Intent.ACTION_VIEW, Uri.parse("vnd.youtube:$youtubeId")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    val web = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/watch?v=$youtubeId")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    runCatching { context.startActivity(app) }.recoverCatching { context.startActivity(web) }
 }
