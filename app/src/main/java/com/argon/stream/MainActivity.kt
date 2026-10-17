@@ -1,6 +1,7 @@
 package com.argon.stream
 
 import android.graphics.Color
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -13,6 +14,8 @@ import androidx.compose.material3.windowsizeclass.calculateWindowSizeClass
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.argon.stream.core.player.PictureInPictureState
+import com.argon.stream.core.player.tryEnterPictureInPicture
 import com.argon.stream.data.local.UserPreferencesRepository
 import com.argon.stream.domain.model.ArgonPreferences
 import com.argon.stream.ui.navigation.ArgonNavHost
@@ -56,6 +59,14 @@ class MainActivity : ComponentActivity() {
                     ArgonNavHost(windowSizeClass = windowSizeClass)
                 }
             }
+        }
+    }
+
+    /** Android 8–11 have no PiP auto-enter, so enter it when the user leaves while a video plays. */
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S && PictureInPictureState.autoEnterEnabled) {
+            tryEnterPictureInPicture()
         }
     }
 }

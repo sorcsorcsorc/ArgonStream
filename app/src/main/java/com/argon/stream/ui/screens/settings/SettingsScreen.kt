@@ -1,6 +1,10 @@
 package com.argon.stream.ui.screens.settings
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -45,6 +49,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -86,6 +91,9 @@ interface SettingsActions {
     fun clearWatchHistory() {}
     fun wipeAllDataAndDisconnect() {}
     fun refreshDiagnostics() {}
+    fun exportBackupTo(uri: Uri) {}
+    fun importBackupFrom(uri: Uri) {}
+    fun clearCrashLog() {}
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -107,6 +115,13 @@ internal fun SettingsContent(
     var pendingConfirm by remember { mutableStateOf<ConfirmAction?>(null) }
     var showDiagnostics by rememberSaveable { mutableStateOf(false) }
     var languagePicker by remember { mutableStateOf<String?>(null) } // "audio" or "subtitle"
+    val context = LocalContext.current
+    val backupSaver = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        uri?.let(actions::exportBackupTo)
+    }
+    val backupPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let(actions::importBackupFrom)
+    }
 
     pendingConfirm?.let { action ->
         AlertDialog(
@@ -314,6 +329,46 @@ internal fun SettingsContent(
                         checked = prefs.dynamicColors,
                         onCheckedChange = actions::setDynamicColors
                     )
+                }
+            }
+        }
+
+        item(key = "backup") {
+            SectionCard(
+                title = "Backup & restore",
+                subtitle = "Saves your settings and add-ons to a file. API keys are not included."
+            ) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { backupSaver.launch("argon-backup.json") }) { Text("Save backup") }
+                    OutlinedButton(onClick = { backupPicker.launch(arrayOf("application/json", "text/plain", "*/*")) }) { Text("Restore") }
+                }
+            }
+        }
+
+        state.crashLog?.let { log ->
+            item(key = "crash") {
+                SectionCard(
+                    title = "Crash report",
+                    subtitle = "The app crashed recently. Share this with the developer to help fix it."
+                ) {
+                    Text(
+                        text = log.lineSequence().take(4).joinToString(separator = System.lineSeparator()),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 4,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = {
+                            val send = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_SUBJECT, "Argon crash report")
+                                putExtra(Intent.EXTRA_TEXT, log)
+                            }
+                            context.startActivity(Intent.createChooser(send, "Share crash report"))
+                        }) { Text("Share") }
+                        OutlinedButton(onClick = actions::clearCrashLog) { Text("Clear") }
+                    }
                 }
             }
         }

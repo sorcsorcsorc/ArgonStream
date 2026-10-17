@@ -15,6 +15,7 @@ import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
+import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
@@ -64,6 +65,7 @@ data class PlayerUiState(
     val currentPositionMs: Long = 0L,
     val durationMs: Long = 0L,
     val bufferedPositionMs: Long = 0L,
+    val videoAspectRatio: Float = 16f / 9f,
     val playbackSpeed: Float = 1.0f,
     val audioTracks: List<SelectableTrackInfo> = emptyList(),
     val subtitleTracks: List<SelectableTrackInfo> = emptyList(),
@@ -134,6 +136,13 @@ class PlayerViewModel @Inject constructor(
                 )
             }
             if (playbackState == Player.STATE_ENDED) markFinished()
+        }
+
+        override fun onVideoSizeChanged(videoSize: VideoSize) {
+            if (videoSize.width > 0 && videoSize.height > 0) {
+                val ratio = videoSize.width * videoSize.pixelWidthHeightRatio / videoSize.height
+                _uiState.update { it.copy(videoAspectRatio = ratio) }
+            }
         }
 
         override fun onTracksChanged(tracks: Tracks) {

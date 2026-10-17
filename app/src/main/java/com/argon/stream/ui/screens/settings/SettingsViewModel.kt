@@ -1,9 +1,11 @@
 package com.argon.stream.ui.screens.settings
 
 import android.content.Context
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import coil3.SingletonImageLoader
+import com.argon.stream.core.diagnostics.CrashLog
 import com.argon.stream.core.network.DiagnosticLogEntry
 import com.argon.stream.core.network.NetworkResult
 import com.argon.stream.core.network.RedactingLoggingInterceptor
@@ -13,6 +15,7 @@ import com.argon.stream.data.local.AddonDao
 import com.argon.stream.data.local.UserPreferencesRepository
 import com.argon.stream.data.local.WatchHistoryDao
 import com.argon.stream.data.local.WatchlistDao
+import com.argon.stream.data.repository.BackupRepository
 import com.argon.stream.data.repository.CatalogRepository
 import com.argon.stream.data.repository.TorBoxRepository
 import com.argon.stream.domain.model.ArgonPreferences
@@ -41,7 +44,8 @@ data class SettingsUiState(
     val availablePlayers: List<ExternalPlayerTarget> = emptyList(),
     val statusMessage: String? = null,
     val isError: Boolean = false,
-    val recentDiagnostics: List<DiagnosticLogEntry> = emptyList()
+    val recentDiagnostics: List<DiagnosticLogEntry> = emptyList(),
+    val crashLog: String? = null
 )
 
 @HiltViewModel
@@ -55,6 +59,7 @@ class SettingsViewModel @Inject constructor(
     private val addonDao: AddonDao,
     private val secretVault: SecretVault,
     private val loggingInterceptor: RedactingLoggingInterceptor,
+    private val backupRepository: BackupRepository,
     externalPlayerLauncher: ExternalPlayerLauncher
 ) : ViewModel(), SettingsActions {
 
@@ -63,7 +68,8 @@ class SettingsViewModel @Inject constructor(
             isTmdbSaved = catalogRepository.hasTmdbCredentials(),
             isTorBoxSaved = torBoxRepository.hasApiKey(),
             availablePlayers = externalPlayerLauncher.getInstalledExternalPlayers(),
-            recentDiagnostics = loggingInterceptor.getRecentLogs()
+            recentDiagnostics = loggingInterceptor.getRecentLogs(),
+            crashLog = CrashLog.read(appContext)
         )
     )
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
@@ -267,6 +273,48 @@ class SettingsViewModel @Inject constructor(
             }
             showStatus("All local data, add-ons and keys were wiped.")
         }
+    }
+
+    override fun exportBackupTo(uri: Uri) {
+        viewModelScope.launch {
+            val backup = backupRepository.exportJson()
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    appContext.contentResolver.openOutputStream(uri, "wt")?.use { it.write(backup.toByteArray(Charsets.UTF_8)) } != null
+                }.getOrDefault(false)
+            }
+            if (ok) showStatus("Backup saved. API keys aren't included; re-enter them after restoring.")
+            else showStatus("Couldn't save the backup file.", isError = true)
+        }
+    }
+
+    override fun importBackupFrom(uri: Uri) {
+        viewModelScope.launch {
+            val text = withContext(Dispatchers.IO) {
+                runCatching { appContext.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } }.getOrNull()
+            }
+            val result = text?.let { backupRepository.restore(it) }
+            when {
+                result == null -> showStatus("That file isn't an Argon backup.", isError = true)
+                result.addonErrors.isNotEmpty() -> showStatus(
+                    "Restored with problems: ${result.addonErrors.size} add-on(s) failed. ${result.addonErrors.first()}",
+                    isError = true
+                )
+                else -> showStatus(
+                    buildString {
+                        append("Backup restored")
+                        if (result.settingsRestored) append(": settings")
+                        if (result.addonsInstalled > 0) append(if (result.settingsRestored) " and ${result.addonsInstalled} add-on(s)" else ": ${result.addonsInstalled} add-on(s)")
+                        append(".")
+                    }
+                )
+            }
+        }
+    }
+
+    override fun clearCrashLog() {
+        CrashLog.clear(appContext)
+        _uiState.update { it.copy(crashLog = null) }
     }
 
     override fun refreshDiagnostics() {

@@ -58,6 +58,7 @@ class ExternalPlayerLauncher @Inject constructor(
                     putExtra("android.media.intent.extra.HTTP_HEADERS", bundle)
                 }
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                if (uri.scheme == "content") addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
 
             if (!target.packageName.isNullOrBlank()) {

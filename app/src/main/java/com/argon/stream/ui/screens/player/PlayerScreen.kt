@@ -5,6 +5,8 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
 import android.media.AudioManager
+import android.os.Build
+import androidx.activity.ComponentActivity
 import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -48,6 +50,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ClosedCaption
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Replay
@@ -85,6 +88,8 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.app.PictureInPictureModeChangedInfo
+import androidx.core.util.Consumer
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -96,6 +101,11 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
+import com.argon.stream.core.player.PictureInPictureState
+import com.argon.stream.core.player.buildPipParams
+import com.argon.stream.core.player.pipAspectRatio
+import com.argon.stream.core.player.supportsPictureInPicture
+import com.argon.stream.core.player.tryEnterPictureInPicture
 import com.argon.stream.domain.model.ExternalPlayerTarget
 import com.argon.stream.domain.model.SelectableTrackInfo
 import kotlinx.coroutines.delay
@@ -166,6 +176,28 @@ fun PlayerScreen(
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
             insetsController?.show(WindowInsetsCompat.Type.systemBars())
         }
+    }
+
+    // Picture-in-picture: track the mode, and let Android enter it automatically while playing.
+    val pipSupported = remember(context) { context.supportsPictureInPicture() }
+    var isInPip by remember { mutableStateOf(activity?.isInPictureInPictureMode == true) }
+    DisposableEffect(activity) {
+        val componentActivity = activity as? ComponentActivity
+        val listener = Consumer<PictureInPictureModeChangedInfo> { isInPip = it.isInPictureInPictureMode }
+        componentActivity?.addOnPictureInPictureModeChangedListener(listener)
+        onDispose {
+            componentActivity?.removeOnPictureInPictureModeChangedListener(listener)
+            PictureInPictureState.autoEnterEnabled = false
+            if (pipSupported && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                runCatching { activity?.setPictureInPictureParams(buildPipParams(autoEnter = false)) }
+            }
+        }
+    }
+    LaunchedEffect(state.isPlaying, state.videoAspectRatio, pipSupported) {
+        if (!pipSupported) return@LaunchedEffect
+        PictureInPictureState.aspectRatio = pipAspectRatio(state.videoAspectRatio)
+        PictureInPictureState.autoEnterEnabled = state.isPlaying
+        runCatching { activity?.setPictureInPictureParams(buildPipParams(autoEnter = state.isPlaying)) }
     }
 
     // Pause (and save progress) when the app goes to the background.
@@ -347,7 +379,7 @@ fun PlayerScreen(
             )
         }
 
-        gestureHudText?.let { hud ->
+        gestureHudText?.takeIf { !isInPip }?.let { hud ->
             Surface(
                 color = Color.Black.copy(alpha = 0.7f),
                 shape = RoundedCornerShape(12.dp),
@@ -365,7 +397,7 @@ fun PlayerScreen(
         }
 
         AnimatedVisibility(
-            visible = showControls || state.playbackError != null || !state.isPlaying && !state.isBuffering,
+            visible = !isInPip && (showControls || state.playbackError != null || !state.isPlaying && !state.isBuffering),
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier.fillMaxSize()
@@ -409,7 +441,10 @@ fun PlayerScreen(
                     scrubFraction?.let { fraction -> viewModel.seekTo((state.durationMs * fraction).toLong()) }
                     scrubFraction = null
                 },
-                onRetry = viewModel::retryPlayback
+                onRetry = viewModel::retryPlayback,
+                onEnterPip = if (pipSupported) {
+                    { activity?.tryEnterPictureInPicture() }
+                } else null
             )
         }
     }
@@ -432,7 +467,8 @@ internal fun PlayerControlsOverlay(
     onSeekForward: () -> Unit,
     onScrub: (Float) -> Unit,
     onScrubFinished: () -> Unit,
-    onRetry: () -> Unit
+    onRetry: () -> Unit,
+    onEnterPip: (() -> Unit)? = null
 ) {
     Box(
         modifier = Modifier
@@ -476,6 +512,11 @@ internal fun PlayerControlsOverlay(
             }
             IconButton(onClick = onCycleFit) {
                 Icon(Icons.Default.AspectRatio, contentDescription = "Video size: ${fitMode.label}", tint = Color.White)
+            }
+            if (onEnterPip != null) {
+                IconButton(onClick = onEnterPip) {
+                    Icon(Icons.Default.PictureInPictureAlt, contentDescription = "Picture in picture", tint = Color.White)
+                }
             }
             IconButton(onClick = onRotate) {
                 Icon(Icons.Default.ScreenRotation, contentDescription = "Rotate", tint = Color.White)

@@ -1,18 +1,26 @@
 package com.argon.stream.ui.screens.library
 
+import android.net.Uri
+import android.provider.OpenableColumns
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Tab
@@ -24,6 +32,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -37,10 +49,26 @@ import com.argon.stream.ui.screens.home.rememberPosterCardWidth
 @Composable
 fun LibraryScreen(
     onOpenMediaDetails: (MediaItem) -> Unit,
+    onPlayLocalFile: (uri: Uri, displayName: String) -> Unit,
     viewModel: LibraryViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    LibraryContent(state = state, onOpenMediaDetails = onOpenMediaDetails)
+    val context = LocalContext.current
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            val name = runCatching {
+                context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) cursor.getString(0) else null
+                }
+            }.getOrNull() ?: uri.lastPathSegment ?: "Video"
+            onPlayLocalFile(uri, name.substringBeforeLast('.'))
+        }
+    }
+    LibraryContent(
+        state = state,
+        onOpenMediaDetails = onOpenMediaDetails,
+        onPickLocalFile = { filePicker.launch(arrayOf("video/*")) }
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -48,13 +76,20 @@ fun LibraryScreen(
 internal fun LibraryContent(
     state: LibraryUiState,
     onOpenMediaDetails: (MediaItem) -> Unit,
+    onPickLocalFile: () -> Unit = {},
     initialTab: Int = 0
 ) {
     var selectedTab by rememberSaveable { mutableIntStateOf(initialTab) }
     val cardWidth = rememberPosterCardWidth()
 
     Column(modifier = Modifier.fillMaxSize()) {
-        ScreenHeader(title = "Library")
+        ScreenHeader(title = "Library") {
+            FilledTonalButton(onClick = onPickLocalFile, modifier = Modifier.padding(end = 8.dp)) {
+                Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Play a file")
+            }
+        }
 
         PrimaryTabRow(selectedTabIndex = selectedTab) {
             listOf("Watchlist", "Favorites", "History").forEachIndexed { index, title ->
