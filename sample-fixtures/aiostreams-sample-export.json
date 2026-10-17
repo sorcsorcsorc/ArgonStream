@@ -1,0 +1,18 @@
+{
+  "services": [
+    {
+      "id": "torbox",
+      "enabled": true
+    }
+  ],
+  "presets": [
+    {
+      "name": "Cinemeta Official",
+      "manifestUrl": "https://v3-cinemeta.strem.io/manifest.json"
+    }
+  ],
+  "filters": {
+    "resolutions": ["2160p", "1080p", "720p"],
+    "languages": ["en", "multi"]
+  }
+}
