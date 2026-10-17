@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
@@ -31,7 +32,10 @@ import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.navigation.NavDestination
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -45,6 +49,7 @@ import androidx.navigation.navArgument
 import com.argon.stream.domain.model.MediaItem
 import com.argon.stream.ui.screens.addons.AddonManagerScreen
 import com.argon.stream.ui.screens.details.TitleDetailsScreen
+import com.argon.stream.ui.screens.downloads.DownloadsScreen
 import com.argon.stream.ui.screens.home.HomeScreen
 import com.argon.stream.ui.screens.library.LibraryScreen
 import com.argon.stream.ui.screens.player.PlayerScreen
@@ -75,23 +80,10 @@ fun ArgonNavHost(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = {
             if (showBottomBar) {
-                NavigationBar {
-                    TopLevelDestination.entries.forEach { destination ->
-                        val selected = currentDestination.isOn(destination)
-                        NavigationBarItem(
-                            selected = selected,
-                            onClick = { navController.navigateToTopLevel(destination) },
-                            icon = {
-                                Icon(
-                                    imageVector = if (selected) destination.selectedIcon else destination.unselectedIcon,
-                                    contentDescription = null
-                                )
-                            },
-                            label = { Text(destination.label, maxLines = 1, softWrap = false) },
-                            alwaysShowLabel = true
-                        )
-                    }
-                }
+                ArgonBottomBar(
+                    isSelected = { currentDestination.isOn(it) },
+                    onNavigate = { navController.navigateToTopLevel(it) }
+                )
             }
         }
     ) { innerPadding ->
@@ -173,6 +165,16 @@ fun ArgonNavHost(
                     )
                 }
 
+                composable(TopLevelDestination.DOWNLOADS.route) {
+                    DownloadsScreen(
+                        onPlayFile = { uri, title ->
+                            navController.navigate(
+                                "$PLAYER_ROUTE_PREFIX?videoId=&streamUrl=${Uri.encode(uri.toString())}&streamTitle=${Uri.encode(title)}"
+                            )
+                        }
+                    )
+                }
+
                 composable(TopLevelDestination.ADDONS.route) {
                     AddonManagerScreen()
                 }
@@ -235,6 +237,44 @@ fun ArgonNavHost(
                     PlayerScreen(onBack = { navController.popBackStack() })
                 }
             }
+        }
+    }
+}
+
+/** Bottom navigation for phones in portrait. Labels shrink slightly so six tabs fit on narrow screens. */
+@Composable
+internal fun ArgonBottomBar(
+    isSelected: (TopLevelDestination) -> Boolean,
+    onNavigate: (TopLevelDestination) -> Unit
+) {
+    val narrow = LocalConfiguration.current.screenWidthDp < 400
+    val labelStyle = MaterialTheme.typography.labelSmall.copy(
+        letterSpacing = 0.sp,
+        fontSize = if (narrow) 10.sp else 11.sp
+    )
+    NavigationBar {
+        TopLevelDestination.entries.forEach { destination ->
+            val selected = isSelected(destination)
+            NavigationBarItem(
+                selected = selected,
+                onClick = { onNavigate(destination) },
+                icon = {
+                    Icon(
+                        imageVector = if (selected) destination.selectedIcon else destination.unselectedIcon,
+                        contentDescription = null
+                    )
+                },
+                label = {
+                    Text(
+                        text = destination.label,
+                        style = labelStyle,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Visible
+                    )
+                },
+                alwaysShowLabel = true
+            )
         }
     }
 }

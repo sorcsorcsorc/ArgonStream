@@ -233,8 +233,7 @@ class StreamSelectionViewModel @Inject constructor(
     private fun startDownload(url: String, name: String, headers: Map<String, String>) {
         when (val result = streamDownloader.enqueue(url, name, headers)) {
             is DownloadStartResult.Started -> showStatus(
-                "Downloading \"${result.fileName}\" to ${result.locationLabel}. Progress is shown in your notifications; " +
-                    "play it later from Library → Play a file.",
+                "Downloading \"${result.fileName}\" to ${result.locationLabel}. Follow progress and play it from the Downloads tab.",
                 isError = false
             )
             is DownloadStartResult.NotSupported -> showStatus(result.reason, isError = true)

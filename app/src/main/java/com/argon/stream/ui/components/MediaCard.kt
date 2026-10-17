@@ -49,7 +49,6 @@ fun MediaCard(
 ) {
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
             .clickable(
                 role = Role.Button,
                 onClickLabel = "Open details for ${item.title}"

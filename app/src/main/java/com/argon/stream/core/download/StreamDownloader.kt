@@ -43,7 +43,7 @@ class StreamDownloader @Inject constructor(
         val fileName = buildFileName(url, suggestedName)
         val request = DownloadManager.Request(uri)
             .setTitle(fileName)
-            .setDescription("Argon download")
+            .setDescription(DESCRIPTION)
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
             .setAllowedOverMetered(true)
         headers.forEach { (name, value) -> request.addRequestHeader(name, value) }
@@ -68,6 +68,7 @@ class StreamDownloader @Inject constructor(
 
     companion object {
         const val FOLDER = "Argon"
+        const val DESCRIPTION = "Argon download"
         private val VIDEO_EXTENSIONS = setOf("mkv", "mp4", "avi", "webm", "mov", "m4v", "ts", "m2ts")
         private val ILLEGAL_CHARS = Regex("[\\\\/:*?\"<>|\\p{Cntrl}]")
 

@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -30,7 +31,13 @@ import com.argon.stream.domain.model.WatchProgressItem
 import com.argon.stream.ui.screens.addons.AddonManagerActions
 import com.argon.stream.ui.screens.addons.AddonManagerContent
 import com.argon.stream.ui.screens.addons.AddonManagerUiState
+import com.argon.stream.core.download.DownloadItem
+import com.argon.stream.core.download.DownloadStatus
+import com.argon.stream.ui.navigation.ArgonBottomBar
+import com.argon.stream.ui.navigation.TopLevelDestination
 import com.argon.stream.ui.screens.details.DetailsContent
+import com.argon.stream.ui.screens.downloads.DownloadsContent
+import com.argon.stream.ui.screens.downloads.DownloadsUiState
 import com.argon.stream.ui.screens.details.TitleDetailsUiState
 import com.argon.stream.ui.screens.home.HomeContent
 import com.argon.stream.ui.screens.home.HomeUiState
@@ -219,6 +226,31 @@ class ScreenLayoutScreenshotTest {
             ),
             actions = object : SettingsActions {}
         )
+    }
+
+    @Test
+    fun downloads() = capture("10_downloads_phone") {
+        DownloadsContent(
+            state = DownloadsUiState(
+                isLoading = false,
+                items = listOf(
+                    DownloadItem(3, "Breaking.Bad.S01E02.1080p.BluRay.x265.mkv", DownloadStatus.RUNNING, 620_000_000, 1_450_000_000),
+                    DownloadItem(2, "The.Matrix.1999.1080p.BluRay.mkv", DownloadStatus.COMPLETED, 2_100_000_000, 2_100_000_000),
+                    DownloadItem(1, "Inception.2010.720p.mkv", DownloadStatus.FAILED, 10_000_000, 900_000_000)
+                )
+            ),
+            onPlay = {}, onRemove = {}
+        )
+    }
+
+    @Test
+    @Config(qualifiers = SMALL_PHONE)
+    fun bottomBarSmallPhone() = capture("11_bottom_bar_small_phone") {
+        Box(modifier = Modifier.fillMaxSize()) {
+            Box(modifier = Modifier.align(Alignment.BottomCenter)) {
+                ArgonBottomBar(isSelected = { it == TopLevelDestination.DOWNLOADS }, onNavigate = {})
+            }
+        }
     }
 
     @Test
