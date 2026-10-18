@@ -156,6 +156,14 @@ class ScreenLayoutScreenshotTest {
     }
 
     @Test
+    fun searchRecents() = capture("02b_search_recent") {
+        SearchContent(
+            state = SearchUiState(query = "", recentSearches = listOf("breaking bad", "dune part two", "the office", "interstellar")),
+            onQueryChange = {}, onTypeFilterChange = {}, onMinRatingChange = {}, onSortOrderChange = {}, onOpenMediaDetails = {}
+        )
+    }
+
+    @Test
     fun library() = capture("03_library_phone") {
         LibraryContent(
             state = LibraryUiState(watchlist = sampleMovies.take(3), favorites = emptyList(), history = emptyList()),

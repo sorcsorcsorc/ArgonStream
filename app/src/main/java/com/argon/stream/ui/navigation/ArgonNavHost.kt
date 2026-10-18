@@ -51,7 +51,16 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material3.Surface
+import androidx.compose.ui.Alignment
 import com.argon.stream.domain.model.MediaItem
+import com.argon.stream.ui.components.ConnectivityViewModel
 import com.argon.stream.ui.screens.addons.AddonManagerScreen
 import com.argon.stream.ui.screens.catalog.CatalogGridScreen
 import com.argon.stream.ui.screens.details.TitleDetailsScreen
@@ -84,6 +93,8 @@ fun ArgonNavHost(
 
     val profilesViewModel: ProfilesViewModel = hiltViewModel()
     val profileState by profilesViewModel.uiState.collectAsStateWithLifecycle()
+    val connectivityViewModel: ConnectivityViewModel = hiltViewModel()
+    val isOnline by connectivityViewModel.isOnline.collectAsStateWithLifecycle()
 
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
@@ -266,6 +277,32 @@ fun ArgonNavHost(
                         }
                     )
                     }
+                }
+            }
+        }
+
+        AnimatedVisibility(
+            visible = !isOnline && !isPlayer && !profileState.showPicker,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .windowInsetsPadding(WindowInsets.navigationBars)
+                .padding(bottom = if (showBottomBar) 88.dp else 16.dp)
+        ) {
+            Surface(
+                color = MaterialTheme.colorScheme.errorContainer,
+                contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                shape = RoundedCornerShape(50),
+                shadowElevation = 4.dp
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                ) {
+                    Icon(Icons.Default.CloudOff, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("No internet connection. Downloads still play.", style = MaterialTheme.typography.labelLarge)
                 }
             }
         }

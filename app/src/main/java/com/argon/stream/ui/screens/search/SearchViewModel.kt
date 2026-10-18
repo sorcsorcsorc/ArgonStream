@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.argon.stream.core.network.NetworkResult
 import com.argon.stream.data.repository.CatalogRepository
+import com.argon.stream.data.repository.RecentSearchesRepository
 import com.argon.stream.domain.model.MediaItem
 import com.argon.stream.domain.model.MediaType
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -34,13 +35,15 @@ data class SearchUiState(
     val sortOrder: SortOrder = SortOrder.RELEVANCE,
     val isLoading: Boolean = false,
     val results: List<MediaItem> = emptyList(),
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val recentSearches: List<String> = emptyList()
 )
 
 @OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class SearchViewModel @Inject constructor(
-    private val catalogRepository: CatalogRepository
+    private val catalogRepository: CatalogRepository,
+    private val recentSearches: RecentSearchesRepository
 ) : ViewModel() {
 
     private val queryFlow = MutableStateFlow("")
@@ -89,6 +92,8 @@ class SearchViewModel @Inject constructor(
             results = sorted,
             errorMessage = error
         )
+    }.combine(recentSearches.observe()) { state, recents ->
+        state.copy(recentSearches = recents)
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
@@ -110,4 +115,11 @@ class SearchViewModel @Inject constructor(
     fun onSortOrderChange(sortOrder: SortOrder) {
         sortOrderFlow.value = sortOrder
     }
+
+    /** Remembers the current query (called when a result is opened or Search is pressed). */
+    fun rememberCurrentQuery() = recentSearches.add(queryFlow.value)
+
+    fun removeRecentSearch(query: String) = recentSearches.remove(query)
+
+    fun clearRecentSearches() = recentSearches.clear()
 }

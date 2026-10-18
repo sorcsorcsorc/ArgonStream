@@ -1,6 +1,16 @@
 package com.argon.stream.ui.screens.search
 
 import androidx.compose.foundation.layout.Arrangement
+import com.argon.stream.ui.components.focusHighlight
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -53,7 +63,13 @@ fun SearchScreen(
         onTypeFilterChange = viewModel::onTypeFilterChange,
         onMinRatingChange = viewModel::onMinRatingChange,
         onSortOrderChange = viewModel::onSortOrderChange,
-        onOpenMediaDetails = onOpenMediaDetails
+        onOpenMediaDetails = { item ->
+            viewModel.rememberCurrentQuery()
+            onOpenMediaDetails(item)
+        },
+        onSubmitSearch = viewModel::rememberCurrentQuery,
+        onRemoveRecent = viewModel::removeRecentSearch,
+        onClearRecents = viewModel::clearRecentSearches
     )
 }
 
@@ -64,7 +80,10 @@ internal fun SearchContent(
     onTypeFilterChange: (MediaType?) -> Unit,
     onMinRatingChange: (Double) -> Unit,
     onSortOrderChange: (SortOrder) -> Unit,
-    onOpenMediaDetails: (MediaItem) -> Unit
+    onOpenMediaDetails: (MediaItem) -> Unit,
+    onSubmitSearch: () -> Unit = {},
+    onRemoveRecent: (String) -> Unit = {},
+    onClearRecents: () -> Unit = {}
 ) {
     val focusManager = LocalFocusManager.current
 
@@ -84,7 +103,10 @@ internal fun SearchContent(
             singleLine = true,
             shape = RoundedCornerShape(28.dp),
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(onSearch = { focusManager.clearFocus() }),
+            keyboardActions = KeyboardActions(onSearch = {
+                onSubmitSearch()
+                focusManager.clearFocus()
+            }),
             modifier = Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
@@ -132,6 +154,13 @@ internal fun SearchContent(
                     message = state.errorMessage.orEmpty()
                 )
 
+                state.query.trim().length < 2 && state.recentSearches.isNotEmpty() -> RecentSearchesList(
+                    recents = state.recentSearches,
+                    onPick = onQueryChange,
+                    onRemove = onRemoveRecent,
+                    onClear = onClearRecents
+                )
+
                 state.query.trim().length < 2 -> EmptyState(
                     icon = Icons.Default.Search,
                     title = "Find something to watch",
@@ -154,6 +183,43 @@ internal fun SearchContent(
                     items(items = state.results, key = { "${it.type}_${it.id}" }) { item ->
                         MediaCard(item = item, onClick = onOpenMediaDetails)
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecentSearchesList(
+    recents: List<String>,
+    onPick: (String) -> Unit,
+    onRemove: (String) -> Unit,
+    onClear: () -> Unit
+) {
+    LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
+        item(key = "header") {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 8.dp)
+            ) {
+                Text("Recent searches", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                TextButton(onClick = onClear) { Text("Clear") }
+            }
+        }
+        items(recents, key = { it }) { query ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusHighlight()
+                    .clickable { onPick(query) }
+                    .padding(start = 16.dp, end = 4.dp)
+            ) {
+                Icon(Icons.Default.History, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(modifier = Modifier.width(16.dp))
+                Text(query, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f), maxLines = 1)
+                IconButton(onClick = { onRemove(query) }) {
+                    Icon(Icons.Default.Close, contentDescription = "Remove $query", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
