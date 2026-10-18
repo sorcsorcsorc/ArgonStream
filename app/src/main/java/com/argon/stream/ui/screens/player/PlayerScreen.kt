@@ -50,6 +50,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.AspectRatio
+import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ClosedCaption
 import androidx.compose.material.icons.filled.Forward10
@@ -64,6 +68,8 @@ import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -166,6 +172,15 @@ fun PlayerScreen(
     var scrubFraction by remember { mutableStateOf<Float?>(null) }
     var volumeDragAccumulator by remember { mutableFloatStateOf(0f) }
     var subtitleCues by remember { mutableStateOf<List<Cue>>(emptyList()) }
+    var isLocked by remember { mutableStateOf(false) }
+    var lockHintTick by remember { mutableIntStateOf(0) }
+    var lockHintVisible by remember { mutableStateOf(false) }
+    var showSleepDialog by remember { mutableStateOf(false) }
+
+    fun showLockHint() {
+        lockHintVisible = true
+        lockHintTick++
+    }
 
     // Subtitles are drawn in their own full-screen layer so zoom/stretch can't push them off screen.
     DisposableEffect(viewModel.exoPlayer) {
@@ -251,6 +266,29 @@ fun PlayerScreen(
         else if (isTv) runCatching { playButtonFocus.requestFocus() }
     }
     BackHandler(enabled = isTv && showControls && state.playbackError == null) { showControls = false }
+    // While the screen is locked, Back only reveals the unlock button.
+    BackHandler(enabled = isLocked) { showLockHint() }
+    LaunchedEffect(lockHintTick) {
+        if (lockHintVisible) {
+            delay(3_000)
+            lockHintVisible = false
+        }
+    }
+
+    if (showSleepDialog) {
+        SleepTimerDialog(
+            state = state,
+            onDismiss = { showSleepDialog = false },
+            onSelectMinutes = {
+                viewModel.setSleepTimer(it)
+                showSleepDialog = false
+            },
+            onEndOfEpisode = {
+                viewModel.setSleepAtEndOfEpisode()
+                showSleepDialog = false
+            }
+        )
+    }
 
     // Pause (and save progress) when the app goes to the background.
     DisposableEffect(lifecycleOwner) {
@@ -379,7 +417,7 @@ fun PlayerScreen(
                     do {
                         val event = awaitPointerEvent(PointerEventPass.Initial)
                         val pressed = event.changes.filter { it.pressed }
-                        if (pressed.size >= 2) {
+                        if (pressed.size >= 2 && !isLocked) {
                             multiTouch = true
                             val distance = (pressed[0].position - pressed[1].position).getDistance()
                             if (startDistance == 0f) startDistance = distance
@@ -407,10 +445,15 @@ fun PlayerScreen(
             .pointerInput(Unit) {
                 detectTapGestures(
                     onTap = {
+                        if (isLocked) {
+                            showLockHint()
+                            return@detectTapGestures
+                        }
                         showControls = !showControls
                         registerInteraction()
                     },
                     onDoubleTap = { offset ->
+                        if (isLocked) return@detectTapGestures
                         val third = size.width / 3f
                         when {
                             offset.x < third -> {
@@ -430,6 +473,7 @@ fun PlayerScreen(
                 detectVerticalDragGestures(
                     onDragStart = { volumeDragAccumulator = 0f },
                     onVerticalDrag = { change, dragAmount ->
+                        if (isLocked) return@detectVerticalDragGestures
                         val isLeftSide = change.position.x < size.width / 2f
                         if (isLeftSide) {
                             val window = activity?.window ?: return@detectVerticalDragGestures
@@ -521,6 +565,28 @@ fun PlayerScreen(
             }
         }
 
+        if (isLocked) {
+            AnimatedVisibility(
+                visible = lockHintVisible,
+                enter = fadeIn(),
+                exit = fadeOut(),
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .windowInsetsPadding(WindowInsets.displayCutout.union(WindowInsets.systemBars))
+                    .padding(16.dp)
+            ) {
+                FilledTonalButton(onClick = {
+                    isLocked = false
+                    lockHintVisible = false
+                    showControls = true
+                }) {
+                    Icon(Icons.Default.LockOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Tap to unlock")
+                }
+            }
+        }
+
         val nextEpisode = state.nextEpisode
         val remainingMs = state.durationMs - state.currentPositionMs
         val showNextCard = !isInPip && nextEpisode != null && state.playbackError == null &&
@@ -541,7 +607,7 @@ fun PlayerScreen(
         }
 
         AnimatedVisibility(
-            visible = !isInPip && (showControls || state.playbackError != null || !state.isPlaying && !state.isBuffering),
+            visible = !isInPip && !isLocked && (showControls || state.playbackError != null || !state.isPlaying && !state.isBuffering),
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier.fillMaxSize()
@@ -588,6 +654,14 @@ fun PlayerScreen(
                 onRetry = viewModel::retryPlayback,
                 playButtonFocus = playButtonFocus,
                 showPhoneControls = !isTv,
+                onLock = if (!isTv) {
+                    {
+                        isLocked = true
+                        showControls = false
+                        showLockHint()
+                    }
+                } else null,
+                onSleepTimer = { showSleepDialog = true },
                 onEnterPip = if (pipSupported && !isTv) {
                     { activity?.tryEnterPictureInPicture() }
                 } else null
@@ -616,8 +690,11 @@ internal fun PlayerControlsOverlay(
     onRetry: () -> Unit,
     onEnterPip: (() -> Unit)? = null,
     playButtonFocus: FocusRequester? = null,
-    showPhoneControls: Boolean = true
+    showPhoneControls: Boolean = true,
+    onLock: (() -> Unit)? = null,
+    onSleepTimer: () -> Unit = {}
 ) {
+    var menuOpen by remember { mutableStateOf(false) }
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -652,28 +729,53 @@ internal fun PlayerControlsOverlay(
                     )
                 }
             }
+            if (onLock != null) {
+                IconButton(onClick = onLock) {
+                    Icon(Icons.Default.Lock, contentDescription = "Lock screen", tint = Color.White)
+                }
+            }
             IconButton(onClick = onTracks) {
                 Icon(Icons.Default.ClosedCaption, contentDescription = "Audio and subtitles", tint = Color.White)
             }
             IconButton(onClick = onSpeed) {
                 Icon(Icons.Default.Speed, contentDescription = "Playback speed", tint = Color.White)
             }
-            IconButton(onClick = onCycleFit) {
-                Icon(Icons.Default.AspectRatio, contentDescription = "Video size: ${fitMode.label}", tint = Color.White)
-            }
-            if (onEnterPip != null) {
-                IconButton(onClick = onEnterPip) {
-                    Icon(Icons.Default.PictureInPictureAlt, contentDescription = "Picture in picture", tint = Color.White)
+            Box {
+                IconButton(onClick = { menuOpen = true }) {
+                    Icon(Icons.Default.MoreVert, contentDescription = "More options", tint = Color.White)
                 }
-            }
-            if (showPhoneControls) {
-                IconButton(onClick = onRotate) {
-                    Icon(Icons.Default.ScreenRotation, contentDescription = "Rotate", tint = Color.White)
-                }
-            }
-            if (state.availableExternalPlayers.any { it != ExternalPlayerTarget.INTERNAL_EXOPLAYER }) {
-                IconButton(onClick = onExternal) {
-                    Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = "Open in another player", tint = Color.White)
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text("Video size: ${fitMode.label}") },
+                        leadingIcon = { Icon(Icons.Default.AspectRatio, contentDescription = null) },
+                        onClick = { menuOpen = false; onCycleFit() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(sleepTimerMenuLabel(state)) },
+                        leadingIcon = { Icon(Icons.Default.Bedtime, contentDescription = null) },
+                        onClick = { menuOpen = false; onSleepTimer() }
+                    )
+                    if (onEnterPip != null) {
+                        DropdownMenuItem(
+                            text = { Text("Picture-in-picture") },
+                            leadingIcon = { Icon(Icons.Default.PictureInPictureAlt, contentDescription = null) },
+                            onClick = { menuOpen = false; onEnterPip() }
+                        )
+                    }
+                    if (showPhoneControls) {
+                        DropdownMenuItem(
+                            text = { Text("Rotate screen") },
+                            leadingIcon = { Icon(Icons.Default.ScreenRotation, contentDescription = null) },
+                            onClick = { menuOpen = false; onRotate() }
+                        )
+                    }
+                    if (state.availableExternalPlayers.any { it != ExternalPlayerTarget.INTERNAL_EXOPLAYER }) {
+                        DropdownMenuItem(
+                            text = { Text("Open in another player") },
+                            leadingIcon = { Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null) },
+                            onClick = { menuOpen = false; onExternal() }
+                        )
+                    }
                 }
             }
         }
@@ -788,9 +890,13 @@ internal fun PlayerControlsOverlay(
                     color = Color.White
                 )
             }
-            if (state.playbackSpeed != 1.0f) {
+            val statusParts = listOfNotNull(
+                sleepTimerShortLabel(state),
+                if (state.playbackSpeed != 1.0f) "Speed ${formatSpeed(state.playbackSpeed)}" else null
+            )
+            if (statusParts.isNotEmpty()) {
                 Text(
-                    text = "Speed ${formatSpeed(state.playbackSpeed)}",
+                    text = statusParts.joinToString("  ·  "),
                     style = MaterialTheme.typography.labelSmall,
                     color = Color.White.copy(alpha = 0.8f),
                     modifier = Modifier.align(Alignment.End)
@@ -907,6 +1013,44 @@ private fun ExternalPlayerHandoffDialog(
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+private fun sleepTimerShortLabel(state: PlayerUiState): String? = when {
+    state.sleepAtEndOfEpisode -> "Sleep at end of episode"
+    state.sleepTimerEndsAtMs != null -> {
+        val minutes = ((state.sleepTimerEndsAtMs - System.currentTimeMillis()) / 60_000L + 1).coerceAtLeast(1)
+        "Sleep in $minutes min"
+    }
+    else -> null
+}
+
+private fun sleepTimerMenuLabel(state: PlayerUiState): String = sleepTimerShortLabel(state) ?: "Sleep timer"
+
+@Composable
+private fun SleepTimerDialog(
+    state: PlayerUiState,
+    onDismiss: () -> Unit,
+    onSelectMinutes: (Int?) -> Unit,
+    onEndOfEpisode: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Default.Bedtime, contentDescription = null) },
+        title = { Text("Sleep timer") },
+        text = {
+            Column {
+                val active = state.sleepTimerEndsAtMs != null || state.sleepAtEndOfEpisode
+                TrackRow(label = "Off", selected = !active, onClick = { onSelectMinutes(null) })
+                listOf(15, 30, 45, 60, 90).forEach { minutes ->
+                    TrackRow(label = "$minutes minutes", selected = false, onClick = { onSelectMinutes(minutes) })
+                }
+                if (state.subtitle != null) {
+                    TrackRow(label = "End of this episode", selected = state.sleepAtEndOfEpisode, onClick = onEndOfEpisode)
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
     )
 }
 

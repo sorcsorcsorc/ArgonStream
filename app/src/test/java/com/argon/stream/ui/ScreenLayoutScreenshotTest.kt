@@ -331,9 +331,8 @@ class ScreenLayoutScreenshotTest {
         )
     }
 
-    @Test
-    @Config(qualifiers = PHONE_LANDSCAPE)
-    fun playerControlsLandscape() = capture("09_player_landscape") {
+    @Composable
+    private fun PlayerControlsSample() {
         Box(modifier = Modifier.fillMaxSize().background(Color.DarkGray)) {
             PlayerControlsOverlay(
                 state = PlayerUiState(
@@ -344,15 +343,24 @@ class ScreenLayoutScreenshotTest {
                     currentPositionMs = 1_250_000,
                     durationMs = 3_480_000,
                     playbackSpeed = 1.25f,
+                    sleepTimerEndsAtMs = System.currentTimeMillis() + 29 * 60_000L,
                     availableExternalPlayers = listOf(ExternalPlayerTarget.INTERNAL_EXOPLAYER, ExternalPlayerTarget.VLC)
                 ),
                 fitMode = FitMode.FIT,
                 scrubFraction = null,
                 onBack = {}, onTracks = {}, onSpeed = {}, onExternal = {}, onCycleFit = {}, onRotate = {},
-                onTogglePlay = {}, onSeekBack = {}, onSeekForward = {}, onScrub = {}, onScrubFinished = {}, onRetry = {}
+                onTogglePlay = {}, onSeekBack = {}, onSeekForward = {}, onScrub = {}, onScrubFinished = {}, onRetry = {},
+                onEnterPip = {}, onLock = {}
             )
         }
     }
+
+    @Test
+    @Config(qualifiers = PHONE_LANDSCAPE)
+    fun playerControlsLandscape() = capture("09_player_landscape") { PlayerControlsSample() }
+
+    @Test
+    fun playerControlsPortrait() = capture("09b_player_portrait") { PlayerControlsSample() }
 
     private companion object {
         val sampleMovies = listOf(

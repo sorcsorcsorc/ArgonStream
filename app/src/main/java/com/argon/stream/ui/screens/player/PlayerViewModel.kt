@@ -89,7 +89,10 @@ data class PlayerUiState(
     val nextEpisode: NextEpisodeInfo? = null,
     /** Seconds left before the next episode starts automatically; null when no countdown runs. */
     val nextEpisodeCountdown: Int? = null,
-    val isLoadingNextEpisode: Boolean = false
+    val isLoadingNextEpisode: Boolean = false,
+    /** Wall-clock time the sleep timer pauses playback, or null when off. */
+    val sleepTimerEndsAtMs: Long? = null,
+    val sleepAtEndOfEpisode: Boolean = false
 )
 
 data class NextEpisodeInfo(
@@ -154,6 +157,7 @@ class PlayerViewModel @Inject constructor(
     private lateinit var httpFactory: OkHttpDataSource.Factory
     private var autoPlayNextEnabled = true
     private var countdownJob: Job? = null
+    private var sleepJob: Job? = null
 
     val exoPlayer: ExoPlayer = buildPlayer()
     private val userAttachedSubtitles = mutableListOf<ExternalSubtitleTrack>()
@@ -178,7 +182,12 @@ class PlayerViewModel @Inject constructor(
             }
             if (playbackState == Player.STATE_ENDED) {
                 markFinished()
-                if (autoPlayNextEnabled && _uiState.value.nextEpisode != null) startNextEpisodeCountdown()
+                if (_uiState.value.sleepAtEndOfEpisode) {
+                    // Sleep timer "end of episode": stop here instead of starting the next one.
+                    _uiState.update { it.copy(sleepAtEndOfEpisode = false) }
+                } else if (autoPlayNextEnabled && _uiState.value.nextEpisode != null) {
+                    startNextEpisodeCountdown()
+                }
             }
         }
 
@@ -318,6 +327,28 @@ class PlayerViewModel @Inject constructor(
             _uiState.update { it.copy(nextEpisodeCountdown = null) }
             playNextEpisode()
         }
+    }
+
+    /** Pauses playback after [minutes]; null turns the timer off. */
+    fun setSleepTimer(minutes: Int?) {
+        sleepJob?.cancel()
+        if (minutes == null) {
+            _uiState.update { it.copy(sleepTimerEndsAtMs = null, sleepAtEndOfEpisode = false) }
+            return
+        }
+        val durationMs = minutes * 60_000L
+        _uiState.update { it.copy(sleepTimerEndsAtMs = System.currentTimeMillis() + durationMs, sleepAtEndOfEpisode = false) }
+        sleepJob = viewModelScope.launch {
+            delay(durationMs)
+            exoPlayer.pause()
+            persistProgressNow()
+            _uiState.update { it.copy(sleepTimerEndsAtMs = null) }
+        }
+    }
+
+    fun setSleepAtEndOfEpisode() {
+        sleepJob?.cancel()
+        _uiState.update { it.copy(sleepTimerEndsAtMs = null, sleepAtEndOfEpisode = true) }
     }
 
     fun cancelNextEpisodeCountdown() {
