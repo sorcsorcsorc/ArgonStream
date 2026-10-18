@@ -13,6 +13,7 @@ import com.argon.stream.data.remote.cinemeta.CinemetaMetaDto
 import com.argon.stream.data.remote.tmdb.TmdbApiService
 import com.argon.stream.data.remote.tmdb.TmdbDetailsDto
 import com.argon.stream.data.remote.tmdb.TmdbMediaDto
+import com.argon.stream.data.remote.wikipedia.WikidataCastClient
 import com.argon.stream.data.remote.wikipedia.WikipediaPhotoClient
 import com.argon.stream.domain.model.CastMember
 import com.argon.stream.domain.model.CatalogGenres
@@ -51,6 +52,7 @@ class CatalogRepository @Inject constructor(
     private val tmdbApi: TmdbApiService,
     private val cinemeta: CinemetaClient,
     private val wikipediaPhotos: WikipediaPhotoClient,
+    private val wikidataCast: WikidataCastClient,
     private val watchHistoryDao: WatchHistoryDao,
     private val watchlistDao: WatchlistDao,
     private val watchedDao: WatchedDao,
@@ -250,7 +252,9 @@ class CatalogRepository @Inject constructor(
         val apiKey = getTmdbApiKeyOrNull()
         val type = query.type ?: MediaType.MOVIE
 
-        if (apiKey != null) {
+        // TMDB has no exact match for some genres (e.g. Horror or Biography for series); Cinemeta has them all.
+        val tmdbCanServe = query.kind != CatalogKind.GENRE || query.genre?.let { CatalogGenres.tmdbGenreId(type, it) } != null
+        if (apiKey != null && tmdbCanServe) {
             val page = cursor + 1
             return safeApiCall {
                 val response = when (query.kind) {
@@ -401,7 +405,7 @@ class CatalogRepository @Inject constructor(
                     }
                 val tmdbExtras = loadTmdbExtrasFor(mediaType, meta.tmdbId)
                 val cast = tmdbExtras?.cast?.takeIf { it.isNotEmpty() }
-                    ?: castWithWikipediaPhotos(meta.cast.orEmpty())
+                    ?: keylessCast(mediaType, imdbId, meta.cast.orEmpty())
                 NetworkResult.Success(
                     MediaDetails(
                         item = item,
@@ -425,6 +429,30 @@ class CatalogRepository @Inject constructor(
         val apiKey = getTmdbApiKeyOrNull() ?: return null
         if (tmdbId == null) return null
         return (loadTmdbDetails(mediaType, tmdbId, apiKey) as? NetworkResult.Success)?.data
+    }
+
+    /**
+     * Without TMDB: the billed cast with portraits from Cinemeta's live endpoint, then everyone else
+     * Wikidata lists (with Commons photos). Falls back to Cinemeta's few names + Wikipedia photos.
+     */
+    private suspend fun keylessCast(mediaType: MediaType, imdbId: String, fallbackNames: List<String>): List<CastMember> = coroutineScope {
+        val billedDeferred = async { cinemeta.fetchCredits(mediaType.toStremioType(), imdbId) }
+        val wikidataDeferred = async { wikidataCast.castFor(imdbId) }
+        val billed = billedDeferred.await().map { c ->
+            CastMember(
+                id = c.id ?: c.name.hashCode(),
+                name = c.name,
+                character = c.character.orEmpty(),
+                profileUrl = c.profilePath?.takeIf { it.isNotBlank() }?.let { "${TmdbApiService.IMAGE_W185}$it" }
+            )
+        }
+        val known = billed.map { it.name.lowercase() }.toMutableSet()
+        val extra = wikidataDeferred.await()
+            .filter { known.add(it.name.lowercase()) }
+            .sortedBy { it.photoUrl == null }
+            .map { CastMember(id = it.name.hashCode(), name = it.name, character = it.character, profileUrl = it.photoUrl) }
+        val merged = (billed + extra).take(MAX_CAST)
+        merged.ifEmpty { castWithWikipediaPhotos(fallbackNames) }
     }
 
     private suspend fun castWithWikipediaPhotos(names: List<String>): List<CastMember> = coroutineScope {
@@ -566,7 +594,7 @@ class CatalogRepository @Inject constructor(
             runtimeMinutes = runtime ?: episodeRunTime.firstOrNull(),
             status = status,
             tagline = tagline?.takeIf { it.isNotBlank() },
-            cast = credits?.cast.orEmpty().take(15).map { c ->
+            cast = credits?.cast.orEmpty().take(MAX_CAST).map { c ->
                 CastMember(
                     id = c.id,
                     name = c.name,
@@ -594,6 +622,7 @@ class CatalogRepository @Inject constructor(
     }
 
     companion object {
+        private const val MAX_CAST = 40
         private val GENRE_MAP = mapOf(
             28 to "Action", 12 to "Adventure", 16 to "Animation", 35 to "Comedy",
             80 to "Crime", 99 to "Documentary", 18 to "Drama", 10751 to "Family",

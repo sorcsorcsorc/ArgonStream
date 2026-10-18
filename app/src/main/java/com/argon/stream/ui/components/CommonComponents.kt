@@ -171,3 +171,30 @@ fun EmptyState(
         }
     }
 }
+
+/** Pill-shaped filter chip used across the app: filled with the accent colour when selected. */
+@Composable
+fun ArgonFilterChip(
+    selected: Boolean,
+    onClick: () -> Unit,
+    label: @Composable () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    androidx.compose.material3.FilterChip(
+        selected = selected,
+        onClick = onClick,
+        label = label,
+        modifier = modifier,
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(50),
+        colors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
+            selectedContainerColor = MaterialTheme.colorScheme.primary,
+            selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+        ),
+        border = androidx.compose.material3.FilterChipDefaults.filterChipBorder(
+            enabled = true,
+            selected = selected,
+            borderColor = MaterialTheme.colorScheme.outlineVariant,
+            selectedBorderColor = androidx.compose.ui.graphics.Color.Transparent
+        )
+    )
+}

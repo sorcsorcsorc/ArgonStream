@@ -332,7 +332,7 @@ class ScreenLayoutScreenshotTest {
     }
 
     @Composable
-    private fun PlayerControlsSample() {
+    private fun PlayerControlsSample(scrubPositionMs: Long? = null) {
         Box(modifier = Modifier.fillMaxSize().background(Color.DarkGray)) {
             PlayerControlsOverlay(
                 state = PlayerUiState(
@@ -342,15 +342,20 @@ class ScreenLayoutScreenshotTest {
                     isBuffering = false,
                     currentPositionMs = 1_250_000,
                     durationMs = 3_480_000,
+                    bufferedPositionMs = 1_600_000,
+                    isSeries = true,
+                    creditsStartMs = 3_300_000,
+                    creditsFromData = true,
+                    skipSegments = com.argon.stream.core.player.SkipSegments(intro = com.argon.stream.core.player.SkipSegment(60_000, 140_000)),
                     playbackSpeed = 1.25f,
                     sleepTimerEndsAtMs = System.currentTimeMillis() + 29 * 60_000L,
                     availableExternalPlayers = listOf(ExternalPlayerTarget.INTERNAL_EXOPLAYER, ExternalPlayerTarget.VLC)
                 ),
                 fitMode = FitMode.FIT,
-                scrubFraction = null,
+                scrubPositionMs = scrubPositionMs,
                 onBack = {}, onTracks = {}, onSpeed = {}, onExternal = {}, onCycleFit = {}, onRotate = {},
                 onTogglePlay = {}, onSeekBack = {}, onSeekForward = {}, onScrub = {}, onScrubFinished = {}, onRetry = {},
-                onEnterPip = {}, onLock = {}
+                onEnterPip = {}, onLock = {}, onEpisodes = {}, onNextEpisode = {}
             )
         }
     }
@@ -361,6 +366,10 @@ class ScreenLayoutScreenshotTest {
 
     @Test
     fun playerControlsPortrait() = capture("09b_player_portrait") { PlayerControlsSample() }
+
+    @Test
+    @Config(qualifiers = PHONE_LANDSCAPE)
+    fun playerSeekingLandscape() = capture("09c_player_seeking") { PlayerControlsSample(scrubPositionMs = 1_730_000) }
 
     private companion object {
         val sampleMovies = listOf(

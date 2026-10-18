@@ -5,6 +5,8 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Lets downloads run without the system progress notification (it buzzes on some phones); normal permission, no prompt -->
     <uses-permission android:name="android.permission.DOWNLOAD_WITHOUT_NOTIFICATION" />
+    <!-- Lets the in-app updater open Android's installer for a downloaded update. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- Android TV / Google TV / Fire TV: the app also runs without a touch screen -->
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />

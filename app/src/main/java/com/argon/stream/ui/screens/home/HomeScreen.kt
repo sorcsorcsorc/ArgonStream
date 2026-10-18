@@ -47,6 +47,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.unit.sp
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
@@ -165,7 +169,18 @@ internal fun HomeContent(
                     FilterChip(
                         selected = state.filterType == type,
                         onClick = { onSetFilter(type) },
-                        label = { Text(label) }
+                        label = { Text(label, style = MaterialTheme.typography.labelLarge) },
+                        shape = RoundedCornerShape(50),
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = MaterialTheme.colorScheme.primary,
+                            selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                        ),
+                        border = FilterChipDefaults.filterChipBorder(
+                            enabled = true,
+                            selected = state.filterType == type,
+                            borderColor = MaterialTheme.colorScheme.outlineVariant,
+                            selectedBorderColor = Color.Transparent
+                        )
                     )
                 }
             }
@@ -175,20 +190,24 @@ internal fun HomeContent(
             item(key = "tmdb_tip") {
                 Surface(
                     color = MaterialTheme.colorScheme.surfaceContainer,
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(16.dp),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp)
                 ) {
-                    Column(modifier = Modifier.padding(start = 14.dp, end = 6.dp, top = 12.dp, bottom = 4.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(start = 14.dp, end = 4.dp, top = 6.dp, bottom = 6.dp)
+                    ) {
                         Text(
-                            text = "Browsing the free Cinemeta catalog. Add a TMDB key in Settings for TMDB trending lists and cast photos.",
+                            text = "Free Cinemeta catalog. Add a TMDB key for trending lists.",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f)
                         )
-                        Row(modifier = Modifier.align(Alignment.End)) {
-                            TextButton(onClick = { tipDismissed = true }) { Text("Dismiss") }
-                            TextButton(onClick = onOpenSettings) { Text("Settings") }
+                        TextButton(onClick = onOpenSettings) { Text("Add") }
+                        IconButton(onClick = { tipDismissed = true }) {
+                            Icon(Icons.Default.Close, contentDescription = "Dismiss", modifier = Modifier.size(18.dp))
                         }
                     }
                 }
@@ -295,13 +314,7 @@ private fun HomeTopBar(onSearch: () -> Unit, profile: Profile?, onSwitchProfile:
             .padding(start = 16.dp, end = 4.dp, top = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(
-            text = "Argon",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.weight(1f)
-        )
+        ArgonWordmark(modifier = Modifier.weight(1f))
         IconButton(onClick = onSearch) {
             Icon(Icons.Default.Search, contentDescription = "Search")
         }
@@ -353,13 +366,7 @@ private fun FeaturedHeroBanner(
                     .padding(start = 16.dp, end = 4.dp, top = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "Argon",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White,
-                    modifier = Modifier.weight(1f)
-                )
+                ArgonWordmark(modifier = Modifier.weight(1f))
                 IconButton(
                     onClick = onSearch,
                     colors = IconButtonDefaults.iconButtonColors(contentColor = Color.White)
@@ -377,7 +384,7 @@ private fun FeaturedHeroBanner(
             ) {
                 Text(
                     text = item.title,
-                    style = MaterialTheme.typography.headlineMedium,
+                    style = MaterialTheme.typography.headlineLarge,
                     color = MaterialTheme.colorScheme.onBackground,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
@@ -395,10 +402,14 @@ private fun FeaturedHeroBanner(
                     )
                 }
                 Spacer(modifier = Modifier.height(12.dp))
-                Button(onClick = onOpen) {
+                Button(
+                    onClick = onOpen,
+                    shape = RoundedCornerShape(14.dp),
+                    contentPadding = PaddingValues(horizontal = 22.dp, vertical = 12.dp)
+                ) {
                     Icon(Icons.Default.PlayArrow, contentDescription = null)
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Watch now")
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Watch now", style = MaterialTheme.typography.titleSmall)
                 }
             }
         }
@@ -470,7 +481,10 @@ private fun PosterRow(
                 modifier = Modifier.weight(1f)
             )
             if (onSeeAll != null) {
-                TextButton(onClick = onSeeAll) { Text("See all") }
+                TextButton(onClick = onSeeAll) {
+                    Text("See all")
+                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, modifier = Modifier.size(18.dp))
+                }
             }
         }
         Spacer(modifier = Modifier.height(4.dp))
@@ -548,4 +562,19 @@ private fun HomeSkeleton(cardWidth: Dp) {
             }
         }
     }
+}
+
+/** "Argon" in a cyan-to-teal gradient. */
+@Composable
+private fun ArgonWordmark(modifier: Modifier = Modifier) {
+    val primary = MaterialTheme.colorScheme.primary
+    Text(
+        text = "Argon",
+        style = MaterialTheme.typography.headlineSmall.copy(
+            brush = Brush.linearGradient(listOf(primary, MaterialTheme.colorScheme.tertiary)),
+            fontWeight = FontWeight.Black,
+            letterSpacing = (-0.5).sp
+        ),
+        modifier = modifier
+    )
 }

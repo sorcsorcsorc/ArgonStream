@@ -37,6 +37,9 @@ import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.Column
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -61,6 +64,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.ui.Alignment
 import com.argon.stream.domain.model.MediaItem
 import com.argon.stream.ui.components.ConnectivityViewModel
+import com.argon.stream.ui.components.UpdatePrompt
 import com.argon.stream.ui.screens.addons.AddonManagerScreen
 import com.argon.stream.ui.screens.catalog.CatalogGridScreen
 import com.argon.stream.ui.screens.details.TitleDetailsScreen
@@ -83,12 +87,12 @@ fun ArgonNavHost(
     val currentDestination = navBackStackEntry?.destination
     val currentRoute = currentDestination?.route
     val isPlayer = currentRoute?.startsWith(PLAYER_ROUTE_PREFIX) == true
-    val isTopLevel = TopLevelDestination.entries.any { it.route == currentRoute }
 
     // Phones in portrait get a bottom bar; landscape phones and tablets get a side rail.
     val useRail = windowSizeClass.widthSizeClass != WindowWidthSizeClass.Compact ||
         windowSizeClass.heightSizeClass == WindowHeightSizeClass.Compact
-    val showBottomBar = !useRail && isTopLevel
+    // The bar stays visible on details/genre pages too, so Home is always one tap away.
+    val showBottomBar = !useRail && !isPlayer
     val showRail = useRail && !isPlayer
 
     val profilesViewModel: ProfilesViewModel = hiltViewModel()
@@ -311,6 +315,11 @@ fun ArgonNavHost(
         if (profileState.showPicker) {
             WhoIsWatchingScreen(state = profileState, actions = profilesViewModel)
         }
+
+        // Asks to update when a newer release exists (checked once per app start, never during playback).
+        if (profileState.ready && !profileState.showPicker && !isPlayer) {
+            UpdatePrompt()
+        }
     }
 }
 
@@ -325,10 +334,20 @@ internal fun ArgonBottomBar(
         letterSpacing = 0.sp,
         fontSize = if (narrow) 10.sp else 11.sp
     )
-    NavigationBar {
+    Column {
+    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), thickness = 0.5.dp)
+    NavigationBar(
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+        tonalElevation = 0.dp
+    ) {
         TopLevelDestination.entries.forEach { destination ->
             val selected = isSelected(destination)
             NavigationBarItem(
+                colors = NavigationBarItemDefaults.colors(
+                    selectedIconColor = MaterialTheme.colorScheme.onPrimary,
+                    indicatorColor = MaterialTheme.colorScheme.primary,
+                    selectedTextColor = MaterialTheme.colorScheme.primary
+                ),
                 selected = selected,
                 onClick = { onNavigate(destination) },
                 icon = {
@@ -351,11 +370,20 @@ internal fun ArgonBottomBar(
         }
     }
 }
+}
 
 private fun NavDestination?.isOn(destination: TopLevelDestination): Boolean =
     this?.hierarchy?.any { it.route == destination.route } == true
 
+/**
+ * Tab navigation. Home always goes back to the Home screen itself (never a details page opened from it);
+ * other tabs keep their state.
+ */
 private fun NavHostController.navigateToTopLevel(destination: TopLevelDestination) {
+    val current = currentBackStackEntry?.destination?.route
+    if (destination == TopLevelDestination.HOME || current == destination.route) {
+        if (popBackStack(destination.route, inclusive = false)) return
+    }
     navigate(destination.route) {
         popUpTo(graph.findStartDestination().id) {
             saveState = true

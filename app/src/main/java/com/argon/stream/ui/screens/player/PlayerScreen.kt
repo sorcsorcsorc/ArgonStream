@@ -76,8 +76,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -91,6 +89,18 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalConfiguration
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.coroutineScope
+import com.argon.stream.core.player.SkipSegment
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.focus.FocusRequester
@@ -152,6 +162,7 @@ fun PlayerScreen(
     viewModel: PlayerViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val previewFrame by viewModel.seekPreview.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
     val audioManager = remember(context) { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
@@ -159,17 +170,25 @@ fun PlayerScreen(
     val isTv = LocalIsTv.current
     val rootFocus = remember { FocusRequester() }
     val playButtonFocus = remember { FocusRequester() }
+    val seekBarFocus = remember { FocusRequester() }
+    val skipButtonFocus = remember { FocusRequester() }
 
     var showControls by remember { mutableStateOf(true) }
     var interactionTick by remember { mutableIntStateOf(0) }
     var showTrackDialog by remember { mutableStateOf(false) }
     var showSpeedDialog by remember { mutableStateOf(false) }
     var showExternalPlayerDialog by remember { mutableStateOf(false) }
+    var showEpisodes by remember { mutableStateOf(false) }
     var gestureHudText by remember { mutableStateOf<String?>(null) }
     var hudTick by remember { mutableIntStateOf(0) }
     var isLandscapeLocked by remember { mutableStateOf(true) }
     var fitMode by remember { mutableStateOf(FitMode.FIT) }
-    var scrubFraction by remember { mutableStateOf<Float?>(null) }
+    var scrubPositionMs by remember { mutableStateOf<Long?>(null) }
+    /** True while the remote's Left/Right keys move the target; the jump happens after a short pause. */
+    var keyScrubbing by remember { mutableStateOf(false) }
+    var keyScrubTick by remember { mutableIntStateOf(0) }
+    var seekAccumMs by remember { mutableStateOf(0L) }
+    var seekAccumTick by remember { mutableIntStateOf(0) }
     var volumeDragAccumulator by remember { mutableFloatStateOf(0f) }
     var subtitleCues by remember { mutableStateOf<List<Cue>>(emptyList()) }
     var isLocked by remember { mutableStateOf(false) }
@@ -202,6 +221,34 @@ fun PlayerScreen(
 
     fun registerInteraction() {
         interactionTick++
+    }
+
+    /** Quick skips (double tap, 10s buttons, media keys) add up into one "+30s" label and open the bar. */
+    fun quickSeek(deltaMs: Long) {
+        viewModel.seekRelative(deltaMs)
+        seekAccumMs = if (seekAccumMs != 0L && (seekAccumMs > 0) == (deltaMs > 0)) seekAccumMs + deltaMs else deltaMs
+        seekAccumTick++
+        showControls = true
+        registerInteraction()
+    }
+
+    /** TV remote skipping: move the target and show the preview; the jump happens when the keys rest. */
+    fun keyScrub(deltaMs: Long) {
+        val duration = state.durationMs
+        if (duration <= 0L) return
+        val base = scrubPositionMs ?: state.currentPositionMs
+        scrubPositionMs = (base + deltaMs).coerceIn(0L, duration)
+        keyScrubbing = true
+        keyScrubTick++
+        showControls = true
+        registerInteraction()
+    }
+
+    fun commitScrub() {
+        scrubPositionMs?.let { viewModel.seekTo(it) }
+        scrubPositionMs = null
+        keyScrubbing = false
+        registerInteraction()
     }
 
     val subtitlePickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -260,12 +307,55 @@ fun PlayerScreen(
         }
     }
 
+    // Skip intro / recap: shown while playback is inside that part of the episode.
+    val position = state.currentPositionMs
+    val skipTarget: Pair<String, Long>? = run {
+        val segments = state.skipSegments
+        fun SkipSegment.contains(ms: Long) = ms >= startMs && ms < (endMs ?: Long.MAX_VALUE) - 1_000L
+        when {
+            state.durationMs <= 0L || state.playbackError != null -> null
+            segments.intro?.contains(position) == true -> "Skip intro" to (segments.intro.endMs ?: return@run null)
+            segments.recap?.contains(position) == true -> "Skip recap" to (segments.recap.endMs ?: return@run null)
+            else -> null
+        }
+    }
+
     // TV remote: when controls hide, focus returns to the player so D-pad keys seek / play-pause.
     LaunchedEffect(showControls, isTv) {
         if (!showControls) runCatching { rootFocus.requestFocus() }
-        else if (isTv) runCatching { playButtonFocus.requestFocus() }
+        else if (isTv && !keyScrubbing) runCatching { playButtonFocus.requestFocus() }
     }
-    BackHandler(enabled = isTv && showControls && state.playbackError == null) { showControls = false }
+    LaunchedEffect(keyScrubbing) {
+        if (!keyScrubbing) return@LaunchedEffect
+        // The bar may only appear on the next frame; try again briefly until it can take focus.
+        repeat(5) {
+            if (runCatching { seekBarFocus.requestFocus() }.isSuccess) return@LaunchedEffect
+            delay(40)
+        }
+    }
+    // The remote's skips are applied once the keys rest for a moment (OK applies them at once).
+    LaunchedEffect(keyScrubTick) {
+        if (!keyScrubbing) return@LaunchedEffect
+        delay(1_100)
+        commitScrub()
+    }
+    LaunchedEffect(scrubPositionMs) {
+        viewModel.requestSeekPreview(scrubPositionMs)
+    }
+    LaunchedEffect(seekAccumTick) {
+        if (seekAccumTick == 0) return@LaunchedEffect
+        delay(1_000)
+        seekAccumMs = 0L
+    }
+    BackHandler(enabled = showEpisodes) { showEpisodes = false }
+    BackHandler(enabled = isTv && showControls && state.playbackError == null && !showEpisodes) {
+        if (scrubPositionMs != null) {
+            scrubPositionMs = null
+            keyScrubbing = false
+        } else {
+            showControls = false
+        }
+    }
     // While the screen is locked, Back only reveals the unlock button.
     BackHandler(enabled = isLocked) { showLockHint() }
     LaunchedEffect(lockHintTick) {
@@ -303,9 +393,9 @@ fun PlayerScreen(
     }
 
     // Auto-hide controls while playing.
-    LaunchedEffect(showControls, state.isPlaying, interactionTick, scrubFraction) {
-        if (showControls && state.isPlaying && scrubFraction == null) {
-            delay(3_500)
+    LaunchedEffect(showControls, state.isPlaying, interactionTick, scrubPositionMs, showEpisodes) {
+        if (showControls && state.isPlaying && scrubPositionMs == null && !showEpisodes) {
+            delay(if (isTv) 5_000 else 3_500)
             showControls = false
         }
     }
@@ -389,15 +479,43 @@ fun PlayerScreen(
                     Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause -> {
                         viewModel.togglePlayPause(); showControls = true; registerInteraction(); true
                     }
-                    Key.MediaFastForward -> { viewModel.seekRelative(PlayerViewModel.SEEK_STEP_MS); showHud("+10s"); true }
-                    Key.MediaRewind -> { viewModel.seekRelative(-PlayerViewModel.SEEK_STEP_MS); showHud("−10s"); true }
-                    else -> if (!showControls) {
+                    Key.MediaFastForward -> { keyScrub(PlayerViewModel.SEEK_STEP_MS); true }
+                    Key.MediaRewind -> { keyScrub(-PlayerViewModel.SEEK_STEP_MS); true }
+                    // While the remote is skipping, keep handling the keys here even before the bar has focus.
+                    Key.DirectionLeft, Key.DirectionRight -> if (keyScrubbing) {
+                        val repeat = event.nativeKeyEvent.repeatCount
+                        val step = if (repeat >= 20) 60_000L else if (repeat >= 6) 30_000L else PlayerViewModel.SEEK_STEP_MS
+                        keyScrub(if (event.key == Key.DirectionLeft) -step else step)
+                        true
+                    } else if (!showControls && !showEpisodes) {
+                        keyScrub(if (event.key == Key.DirectionLeft) -PlayerViewModel.SEEK_STEP_MS else PlayerViewModel.SEEK_STEP_MS)
+                        true
+                    } else {
+                        registerInteraction()
+                        false
+                    }
+                    Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> if (keyScrubbing) {
+                        commitScrub(); true
+                    } else if (!showControls && !showEpisodes) {
+                        val skip = skipTarget
+                        if (skip != null) viewModel.seekTo(skip.second)
+                        else { viewModel.togglePlayPause(); showControls = true }
+                        true
+                    } else {
+                        registerInteraction()
+                        false
+                    }
+                    else -> if (!showControls && !showEpisodes) {
                         when (event.key) {
                             Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.Spacebar -> {
-                                viewModel.togglePlayPause(); showControls = true; true
+                                val skip = skipTarget
+                                if (skip != null) viewModel.seekTo(skip.second)
+                                else { viewModel.togglePlayPause(); showControls = true }
+                                true
                             }
-                            Key.DirectionLeft -> { viewModel.seekRelative(-PlayerViewModel.SEEK_STEP_MS); showHud("−10s"); true }
-                            Key.DirectionRight -> { viewModel.seekRelative(PlayerViewModel.SEEK_STEP_MS); showHud("+10s"); true }
+                            // Like Netflix: Left/Right open the bar and move the target with a preview.
+                            Key.DirectionLeft -> { keyScrub(-PlayerViewModel.SEEK_STEP_MS); true }
+                            Key.DirectionRight -> { keyScrub(PlayerViewModel.SEEK_STEP_MS); true }
                             Key.DirectionUp, Key.DirectionDown -> { showControls = true; registerInteraction(); true }
                             else -> false
                         }
@@ -444,6 +562,20 @@ fun PlayerScreen(
             }
             .pointerInput(Unit) {
                 detectTapGestures(
+                    onPress = {
+                        // Hold anywhere for 2x speed (released = normal speed again).
+                        if (isLocked) return@detectTapGestures
+                        coroutineScope {
+                            val boost = launch {
+                                delay(LONG_PRESS_BOOST_MS)
+                                viewModel.setSpeedBoost(true)
+                            }
+                            tryAwaitRelease()
+                            boost.cancel()
+                            viewModel.setSpeedBoost(false)
+                        }
+                    },
+                    onLongPress = { /* handled in onPress; prevents a tap after the hold */ },
                     onTap = {
                         if (isLocked) {
                             showLockHint()
@@ -456,14 +588,8 @@ fun PlayerScreen(
                         if (isLocked) return@detectTapGestures
                         val third = size.width / 3f
                         when {
-                            offset.x < third -> {
-                                viewModel.seekRelative(-PlayerViewModel.SEEK_STEP_MS)
-                                showHud("−10s")
-                            }
-                            offset.x > third * 2 -> {
-                                viewModel.seekRelative(PlayerViewModel.SEEK_STEP_MS)
-                                showHud("+10s")
-                            }
+                            offset.x < third -> quickSeek(-PlayerViewModel.SEEK_STEP_MS)
+                            offset.x > third * 2 -> quickSeek(PlayerViewModel.SEEK_STEP_MS)
                             else -> viewModel.togglePlayPause()
                         }
                     }
@@ -544,25 +670,27 @@ fun PlayerScreen(
         if (state.isBuffering && state.playbackError == null) {
             CircularProgressIndicator(
                 color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.align(Alignment.Center)
+                strokeWidth = 3.dp,
+                modifier = Modifier.align(Alignment.Center).size(52.dp)
             )
         }
 
         gestureHudText?.takeIf { !isInPip }?.let { hud ->
-            Surface(
-                color = Color.Black.copy(alpha = 0.7f),
-                shape = RoundedCornerShape(12.dp),
+            PlayerPill(text = hud, modifier = Modifier.align(Alignment.TopCenter).padding(top = 56.dp))
+        }
+
+        if (state.isSpeedBoosted && !isInPip) {
+            PlayerPill(text = "2x  ▶▶", modifier = Modifier.align(Alignment.TopCenter).padding(top = 20.dp))
+        }
+
+        // "+30s" / "−20s" on the side that was double-tapped.
+        if (seekAccumMs != 0L && !isInPip) {
+            PlayerPill(
+                text = formatSeekDelta(seekAccumMs),
                 modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = 48.dp)
-            ) {
-                Text(
-                    text = hud,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Color.White,
-                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp)
-                )
-            }
+                    .align(if (seekAccumMs > 0) Alignment.CenterEnd else Alignment.CenterStart)
+                    .padding(horizontal = 64.dp)
+            )
         }
 
         if (isLocked) {
@@ -587,27 +715,11 @@ fun PlayerScreen(
             }
         }
 
-        val nextEpisode = state.nextEpisode
-        val remainingMs = state.durationMs - state.currentPositionMs
-        val showNextCard = !isInPip && nextEpisode != null && state.playbackError == null &&
-            (state.isEnded || state.nextEpisodeCountdown != null || state.isLoadingNextEpisode ||
-                (state.durationMs > 0L && remainingMs in 1L..NEXT_EPISODE_PROMPT_MS))
-        if (showNextCard && nextEpisode != null) {
-            NextEpisodeCard(
-                next = nextEpisode,
-                countdown = state.nextEpisodeCountdown,
-                isLoading = state.isLoadingNextEpisode,
-                onPlay = viewModel::playNextEpisode,
-                onCancel = viewModel::cancelNextEpisodeCountdown,
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .windowInsetsPadding(WindowInsets.displayCutout.union(WindowInsets.systemBars))
-                    .padding(end = 16.dp, bottom = 72.dp)
-            )
-        }
+        val controlsVisible = !isInPip && !isLocked &&
+            (showControls || state.playbackError != null || !state.isPlaying && !state.isBuffering)
 
         AnimatedVisibility(
-            visible = !isInPip && !isLocked && (showControls || state.playbackError != null || !state.isPlaying && !state.isBuffering),
+            visible = controlsVisible,
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier.fillMaxSize()
@@ -615,11 +727,19 @@ fun PlayerScreen(
             PlayerControlsOverlay(
                 state = state,
                 fitMode = fitMode,
-                scrubFraction = scrubFraction,
+                scrubPositionMs = scrubPositionMs,
+                previewFrame = previewFrame,
                 onBack = onBack,
                 onTracks = { showTrackDialog = true },
                 onSpeed = { showSpeedDialog = true },
                 onExternal = { showExternalPlayerDialog = true },
+                onEpisodes = if (state.isSeries) {
+                    {
+                        viewModel.openEpisodesPanel()
+                        showEpisodes = true
+                    }
+                } else null,
+                onNextEpisode = if (state.nextEpisode != null) viewModel::playNextEpisode else null,
                 onCycleFit = {
                     fitMode = FitMode.entries[(fitMode.ordinal + 1) % FitMode.entries.size]
                     showHud(fitMode.label)
@@ -638,21 +758,18 @@ fun PlayerScreen(
                     viewModel.togglePlayPause()
                     registerInteraction()
                 },
-                onSeekBack = {
-                    viewModel.seekRelative(-PlayerViewModel.SEEK_STEP_MS)
+                onSeekBack = { quickSeek(-PlayerViewModel.SEEK_STEP_MS) },
+                onSeekForward = { quickSeek(PlayerViewModel.SEEK_STEP_MS) },
+                onScrub = {
+                    keyScrubbing = false
+                    scrubPositionMs = it
                     registerInteraction()
                 },
-                onSeekForward = {
-                    viewModel.seekRelative(PlayerViewModel.SEEK_STEP_MS)
-                    registerInteraction()
-                },
-                onScrub = { scrubFraction = it },
-                onScrubFinished = {
-                    scrubFraction?.let { fraction -> viewModel.seekTo((state.durationMs * fraction).toLong()) }
-                    scrubFraction = null
-                },
+                onScrubFinished = { commitScrub() },
+                onKeyScrub = { keyScrub(it) },
                 onRetry = viewModel::retryPlayback,
                 playButtonFocus = playButtonFocus,
+                seekBarFocus = seekBarFocus,
                 showPhoneControls = !isTv,
                 onLock = if (!isTv) {
                     {
@@ -667,6 +784,81 @@ fun PlayerScreen(
                 } else null
             )
         }
+
+        // Skip intro / recap button, bottom right like the big streaming apps.
+        val skip = skipTarget
+        AnimatedVisibility(
+            visible = skip != null && !isInPip && !isLocked && !showEpisodes,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .windowInsetsPadding(WindowInsets.displayCutout.union(WindowInsets.systemBars))
+                .padding(end = 24.dp, bottom = if (controlsVisible) 132.dp else 40.dp)
+        ) {
+            val label = skip?.first ?: "Skip intro"
+            OutlinedButton(
+                onClick = { skip?.let { viewModel.seekTo(it.second) }; registerInteraction() },
+                shape = RoundedCornerShape(12.dp),
+                border = androidx.compose.foundation.BorderStroke(1.5.dp, Color.White.copy(alpha = 0.85f)),
+                colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.Black.copy(alpha = 0.55f), contentColor = Color.White),
+                modifier = Modifier.focusRequester(skipButtonFocus)
+            ) {
+                Icon(Icons.Default.SkipNext, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(if (isTv && !controlsVisible) "$label  (OK)" else label, style = MaterialTheme.typography.labelLarge)
+            }
+        }
+
+        val nextEpisode = state.nextEpisode
+        val creditsReached = state.creditsStartMs?.let { state.durationMs > 0L && position >= it } == true
+        val showNextCard = !isInPip && !showEpisodes && nextEpisode != null && state.playbackError == null &&
+            (state.isEnded || state.nextEpisodeCountdown != null || state.isLoadingNextEpisode ||
+                (creditsReached && !state.creditsDismissed))
+        if (showNextCard && nextEpisode != null) {
+            NextEpisodeCard(
+                next = nextEpisode,
+                countdown = state.nextEpisodeCountdown,
+                isLoading = state.isLoadingNextEpisode,
+                showWatchCredits = !state.isEnded,
+                onPlay = viewModel::playNextEpisode,
+                onWatchCredits = viewModel::dismissCredits,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .windowInsetsPadding(WindowInsets.displayCutout.union(WindowInsets.systemBars))
+                    .padding(end = 24.dp, bottom = if (controlsVisible) 132.dp else 40.dp)
+            )
+        }
+
+        if (showEpisodes && !isInPip) {
+            EpisodesPanel(
+                state = state,
+                onSelectSeason = viewModel::selectEpisodesSeason,
+                onPlayEpisode = { episode ->
+                    showEpisodes = false
+                    if (episode.seasonNumber != state.seasonNumber || episode.episodeNumber != state.episodeNumber) {
+                        viewModel.playEpisode(episode.seasonNumber, episode.episodeNumber)
+                    }
+                },
+                onClose = { showEpisodes = false }
+            )
+        }
+    }
+}
+
+@Composable
+private fun PlayerPill(text: String, modifier: Modifier = Modifier) {
+    Surface(
+        color = Color.Black.copy(alpha = 0.62f),
+        contentColor = Color.White,
+        shape = RoundedCornerShape(50),
+        modifier = modifier
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.titleSmall,
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp)
+        )
     }
 }
 
@@ -675,7 +867,7 @@ fun PlayerScreen(
 internal fun PlayerControlsOverlay(
     state: PlayerUiState,
     fitMode: FitMode,
-    scrubFraction: Float?,
+    scrubPositionMs: Long?,
     onBack: () -> Unit,
     onTracks: () -> Unit,
     onSpeed: () -> Unit,
@@ -685,225 +877,282 @@ internal fun PlayerControlsOverlay(
     onTogglePlay: () -> Unit,
     onSeekBack: () -> Unit,
     onSeekForward: () -> Unit,
-    onScrub: (Float) -> Unit,
+    onScrub: (Long) -> Unit,
     onScrubFinished: () -> Unit,
     onRetry: () -> Unit,
+    previewFrame: SeekPreviewFrame? = null,
+    onKeyScrub: (Long) -> Unit = {},
+    onEpisodes: (() -> Unit)? = null,
+    onNextEpisode: (() -> Unit)? = null,
     onEnterPip: (() -> Unit)? = null,
     playButtonFocus: FocusRequester? = null,
+    seekBarFocus: FocusRequester? = null,
     showPhoneControls: Boolean = true,
     onLock: (() -> Unit)? = null,
     onSleepTimer: () -> Unit = {}
 ) {
     var menuOpen by remember { mutableStateOf(false) }
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.45f))
-            .windowInsetsPadding(WindowInsets.displayCutout.union(WindowInsets.systemBars))
-    ) {
-        // Top bar
-        Row(
+    Box(modifier = Modifier.fillMaxSize()) {
+        // Soft scrims top and bottom instead of a flat grey veil, so the picture stays visible.
+        Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .align(Alignment.TopCenter)
-                .padding(horizontal = 4.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = state.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Color.White,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        0f to Color.Black.copy(alpha = 0.72f),
+                        0.22f to Color.Black.copy(alpha = 0.18f),
+                        0.6f to Color.Black.copy(alpha = 0.18f),
+                        1f to Color.Black.copy(alpha = 0.85f)
+                    )
                 )
-                state.subtitle?.let {
-                    Text(
-                        text = it,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = Color.White.copy(alpha = 0.75f),
-                        maxLines = 1
-                    )
-                }
-            }
-            if (onLock != null) {
-                IconButton(onClick = onLock) {
-                    Icon(Icons.Default.Lock, contentDescription = "Lock screen", tint = Color.White)
-                }
-            }
-            IconButton(onClick = onTracks) {
-                Icon(Icons.Default.ClosedCaption, contentDescription = "Audio and subtitles", tint = Color.White)
-            }
-            IconButton(onClick = onSpeed) {
-                Icon(Icons.Default.Speed, contentDescription = "Playback speed", tint = Color.White)
-            }
-            Box {
-                IconButton(onClick = { menuOpen = true }) {
-                    Icon(Icons.Default.MoreVert, contentDescription = "More options", tint = Color.White)
-                }
-                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                    DropdownMenuItem(
-                        text = { Text("Video size: ${fitMode.label}") },
-                        leadingIcon = { Icon(Icons.Default.AspectRatio, contentDescription = null) },
-                        onClick = { menuOpen = false; onCycleFit() }
-                    )
-                    DropdownMenuItem(
-                        text = { Text(sleepTimerMenuLabel(state)) },
-                        leadingIcon = { Icon(Icons.Default.Bedtime, contentDescription = null) },
-                        onClick = { menuOpen = false; onSleepTimer() }
-                    )
-                    if (onEnterPip != null) {
-                        DropdownMenuItem(
-                            text = { Text("Picture-in-picture") },
-                            leadingIcon = { Icon(Icons.Default.PictureInPictureAlt, contentDescription = null) },
-                            onClick = { menuOpen = false; onEnterPip() }
-                        )
-                    }
-                    if (showPhoneControls) {
-                        DropdownMenuItem(
-                            text = { Text("Rotate screen") },
-                            leadingIcon = { Icon(Icons.Default.ScreenRotation, contentDescription = null) },
-                            onClick = { menuOpen = false; onRotate() }
-                        )
-                    }
-                    if (state.availableExternalPlayers.any { it != ExternalPlayerTarget.INTERNAL_EXOPLAYER }) {
-                        DropdownMenuItem(
-                            text = { Text("Open in another player") },
-                            leadingIcon = { Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null) },
-                            onClick = { menuOpen = false; onExternal() }
-                        )
-                    }
-                }
-            }
-        }
-
-        val error = state.playbackError
-        if (error != null) {
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .padding(horizontal = 24.dp, vertical = 56.dp)
-                    .widthIn(max = 480.dp)
-            ) {
-                Column(
-                    modifier = Modifier
-                        .verticalScroll(rememberScrollState())
-                        .padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Text("Playback problem", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.error)
-                    Text(error.userSummary, style = MaterialTheme.typography.bodyMedium)
-                    Text(
-                        text = error.technicalDetail,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Button(onClick = onRetry) {
-                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Retry")
-                        }
-                        if (state.availableExternalPlayers.any { it != ExternalPlayerTarget.INTERNAL_EXOPLAYER }) {
-                            FilledTonalButton(onClick = onExternal) { Text("Other player") }
-                        }
-                        OutlinedButton(onClick = onBack) { Text("Back") }
-                    }
-                }
-            }
-        } else {
-            // Center transport controls
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.displayCutout.union(WindowInsets.systemBars))
+        ) {
+            // Top bar
             Row(
-                modifier = Modifier.align(Alignment.Center),
-                horizontalArrangement = Arrangement.spacedBy(32.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.TopCenter)
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = onSeekBack, modifier = Modifier.size(56.dp)) {
-                    Icon(Icons.Default.Replay10, contentDescription = "Back 10 seconds", tint = Color.White, modifier = Modifier.size(36.dp))
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
                 }
-                Surface(
-                    shape = RoundedCornerShape(50),
-                    color = Color.White.copy(alpha = 0.15f),
-                    modifier = Modifier.size(72.dp)
-                ) {
-                    IconButton(
-                        onClick = onTogglePlay,
-                        modifier = if (playButtonFocus != null) Modifier.focusRequester(playButtonFocus) else Modifier
-                    ) {
-                        Icon(
-                            imageVector = when {
-                                state.isEnded -> Icons.Default.Replay
-                                state.isPlaying -> Icons.Default.Pause
-                                else -> Icons.Default.PlayArrow
-                            },
-                            contentDescription = if (state.isPlaying) "Pause" else "Play",
-                            tint = Color.White,
-                            modifier = Modifier.size(44.dp)
+                Column(modifier = Modifier.weight(1f).padding(start = 4.dp)) {
+                    Text(
+                        text = state.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    state.subtitle?.let {
+                        Text(
+                            text = it,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = Color.White.copy(alpha = 0.72f),
+                            maxLines = 1
                         )
                     }
                 }
-                IconButton(onClick = onSeekForward, modifier = Modifier.size(56.dp)) {
-                    Icon(Icons.Default.Forward10, contentDescription = "Forward 10 seconds", tint = Color.White, modifier = Modifier.size(36.dp))
+                if (onLock != null) {
+                    IconButton(onClick = onLock) {
+                        Icon(Icons.Default.Lock, contentDescription = "Lock screen", tint = Color.White)
+                    }
+                }
+                Box {
+                    IconButton(onClick = { menuOpen = true }) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "More options", tint = Color.White)
+                    }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Video size: ${fitMode.label}") },
+                            leadingIcon = { Icon(Icons.Default.AspectRatio, contentDescription = null) },
+                            onClick = { menuOpen = false; onCycleFit() }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(sleepTimerMenuLabel(state)) },
+                            leadingIcon = { Icon(Icons.Default.Bedtime, contentDescription = null) },
+                            onClick = { menuOpen = false; onSleepTimer() }
+                        )
+                        if (onEnterPip != null) {
+                            DropdownMenuItem(
+                                text = { Text("Picture-in-picture") },
+                                leadingIcon = { Icon(Icons.Default.PictureInPictureAlt, contentDescription = null) },
+                                onClick = { menuOpen = false; onEnterPip() }
+                            )
+                        }
+                        if (showPhoneControls) {
+                            DropdownMenuItem(
+                                text = { Text("Rotate screen") },
+                                leadingIcon = { Icon(Icons.Default.ScreenRotation, contentDescription = null) },
+                                onClick = { menuOpen = false; onRotate() }
+                            )
+                        }
+                        if (state.availableExternalPlayers.any { it != ExternalPlayerTarget.INTERNAL_EXOPLAYER }) {
+                            DropdownMenuItem(
+                                text = { Text("Open in another player") },
+                                leadingIcon = { Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null) },
+                                onClick = { menuOpen = false; onExternal() }
+                            )
+                        }
+                    }
                 }
             }
-        }
 
-        // Bottom seek bar
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .align(Alignment.BottomCenter)
-                .padding(horizontal = 16.dp, vertical = 4.dp)
-        ) {
-            val duration = state.durationMs
-            val playedFraction = if (duration > 0L) (state.currentPositionMs.toFloat() / duration).coerceIn(0f, 1f) else 0f
-            val shownFraction = scrubFraction ?: playedFraction
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = formatDurationMs((shownFraction * duration).toLong()),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = Color.White
-                )
-                Slider(
-                    value = shownFraction,
-                    onValueChange = onScrub,
-                    onValueChangeFinished = onScrubFinished,
-                    enabled = duration > 0L,
-                    colors = SliderDefaults.colors(
-                        inactiveTrackColor = Color.White.copy(alpha = 0.3f)
-                    ),
+            val error = state.playbackError
+            if (error != null) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    shape = RoundedCornerShape(20.dp),
                     modifier = Modifier
-                        .weight(1f)
-                        .padding(horizontal = 12.dp)
-                )
-                Text(
-                    text = if (duration > 0L) formatDurationMs(duration) else "--:--",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = Color.White
-                )
+                        .align(Alignment.Center)
+                        .padding(horizontal = 24.dp, vertical = 56.dp)
+                        .widthIn(max = 480.dp)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .verticalScroll(rememberScrollState())
+                            .padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text("Playback problem", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.error)
+                        Text(error.userSummary, style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            text = error.technicalDetail,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(onClick = onRetry) {
+                                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Retry")
+                            }
+                            if (state.availableExternalPlayers.any { it != ExternalPlayerTarget.INTERNAL_EXOPLAYER }) {
+                                FilledTonalButton(onClick = onExternal) { Text("Other player") }
+                            }
+                            OutlinedButton(onClick = onBack) { Text("Back") }
+                        }
+                    }
+                }
+            } else if (scrubPositionMs == null) {
+                // Center transport controls (hidden while skipping so the preview has room).
+                Row(
+                    modifier = Modifier.align(Alignment.Center),
+                    horizontalArrangement = Arrangement.spacedBy(40.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onSeekBack, modifier = Modifier.size(60.dp)) {
+                        Icon(Icons.Default.Replay10, contentDescription = "Back 10 seconds", tint = Color.White, modifier = Modifier.size(38.dp))
+                    }
+                    Surface(
+                        shape = CircleShape,
+                        color = Color.White.copy(alpha = 0.16f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.25f)),
+                        modifier = Modifier.size(78.dp)
+                    ) {
+                        IconButton(
+                            onClick = onTogglePlay,
+                            modifier = if (playButtonFocus != null) Modifier.focusRequester(playButtonFocus) else Modifier
+                        ) {
+                            Icon(
+                                imageVector = when {
+                                    state.isEnded -> Icons.Default.Replay
+                                    state.isPlaying -> Icons.Default.Pause
+                                    else -> Icons.Default.PlayArrow
+                                },
+                                contentDescription = if (state.isPlaying) "Pause" else "Play",
+                                tint = Color.White,
+                                modifier = Modifier.size(46.dp)
+                            )
+                        }
+                    }
+                    IconButton(onClick = onSeekForward, modifier = Modifier.size(60.dp)) {
+                        Icon(Icons.Default.Forward10, contentDescription = "Forward 10 seconds", tint = Color.White, modifier = Modifier.size(38.dp))
+                    }
+                }
             }
-            val statusParts = listOfNotNull(
-                sleepTimerShortLabel(state),
-                if (state.playbackSpeed != 1.0f) "Speed ${formatSpeed(state.playbackSpeed)}" else null
-            )
-            if (statusParts.isNotEmpty()) {
-                Text(
-                    text = statusParts.joinToString("  ·  "),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color.White.copy(alpha = 0.8f),
-                    modifier = Modifier.align(Alignment.End)
+
+            // Bottom: seek bar, times and actions.
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.BottomCenter)
+                    .padding(start = 20.dp, end = 20.dp, bottom = 6.dp)
+            ) {
+                val duration = state.durationMs
+                val shownPosition = scrubPositionMs ?: state.currentPositionMs
+                val intro = state.skipSegments.intro?.let { seg -> seg.endMs?.let { seg.startMs..it } }
+                ArgonSeekBar(
+                    positionMs = state.currentPositionMs,
+                    durationMs = duration,
+                    bufferedMs = state.bufferedPositionMs,
+                    scrubPositionMs = scrubPositionMs,
+                    previewFrame = previewFrame,
+                    introRange = intro,
+                    creditsStartMs = state.creditsStartMs.takeIf { state.creditsFromData },
+                    onScrub = onScrub,
+                    onScrubFinished = onScrubFinished,
+                    onKeyScrub = onKeyScrub,
+                    focusRequester = seekBarFocus
                 )
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = buildString {
+                            append(formatPlayerTime(shownPosition))
+                            append("  /  ")
+                            append(if (duration > 0L) formatPlayerTime(duration) else "--:--")
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color.White
+                    )
+                    Spacer(Modifier.weight(1f))
+                    val statusParts = listOfNotNull(
+                        sleepTimerShortLabel(state),
+                        if (state.playbackSpeed != 1.0f) "Speed ${formatSpeed(state.playbackSpeed)}" else null,
+                        endsAtLabel(state)
+                    )
+                    if (statusParts.isNotEmpty()) {
+                        Text(
+                            text = statusParts.joinToString("  ·  "),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = Color.White.copy(alpha = 0.75f)
+                        )
+                    }
+                }
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth().padding(top = 2.dp)
+                ) {
+                    if (onEpisodes != null) {
+                        PlayerActionButton(Icons.AutoMirrored.Filled.List, "Episodes", onEpisodes)
+                    }
+                    PlayerActionButton(Icons.Default.ClosedCaption, "Audio & subtitles", onTracks)
+                    PlayerActionButton(Icons.Default.Speed, "Speed", onSpeed)
+                    Spacer(Modifier.weight(1f))
+                    if (onNextEpisode != null) {
+                        PlayerActionButton(Icons.Default.SkipNext, "Next episode", onNextEpisode)
+                    }
+                }
             }
         }
     }
+}
+
+@Composable
+private fun PlayerActionButton(icon: ImageVector, label: String, onClick: () -> Unit) {
+    // Narrow (portrait phone) screens get icon-only buttons so the row never wraps.
+    if (LocalConfiguration.current.screenWidthDp < 560) {
+        IconButton(onClick = onClick) { Icon(icon, contentDescription = label, tint = Color.White) }
+        return
+    }
+    TextButton(
+        onClick = onClick,
+        colors = ButtonDefaults.textButtonColors(contentColor = Color.White),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+    ) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 1)
+    }
+}
+
+/** "Ends 22:41": when the video finishes at the current speed. */
+private fun endsAtLabel(state: PlayerUiState): String? {
+    if (state.durationMs <= 0L) return null
+    val remaining = ((state.durationMs - state.currentPositionMs).coerceAtLeast(0L) / state.playbackSpeed).toLong()
+    val endsAt = java.time.LocalTime.now().plusSeconds(remaining / 1000L)
+    return "Ends " + endsAt.format(java.time.format.DateTimeFormatter.ofPattern("HH:mm", Locale.getDefault()))
 }
 
 @Composable
@@ -1059,59 +1308,65 @@ private fun NextEpisodeCard(
     next: NextEpisodeInfo,
     countdown: Int?,
     isLoading: Boolean,
+    showWatchCredits: Boolean,
     onPlay: () -> Unit,
-    onCancel: () -> Unit,
+    onWatchCredits: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val focus = remember { FocusRequester() }
+    val isTv = LocalIsTv.current
+    LaunchedEffect(isTv) { if (isTv) runCatching { focus.requestFocus() } }
     Surface(
-        color = Color.Black.copy(alpha = 0.8f),
+        color = Color(0xE60D1117),
         contentColor = Color.White,
-        shape = RoundedCornerShape(14.dp),
-        modifier = modifier.widthIn(max = 320.dp)
+        shape = RoundedCornerShape(18.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
+        modifier = modifier.widthIn(max = 340.dp)
     ) {
-        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(
-                text = "Next: S${next.seasonNumber} · E${next.episodeNumber}",
-                style = MaterialTheme.typography.labelLarge,
+                text = "UP NEXT  ·  S${next.seasonNumber} E${next.episodeNumber}",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary
             )
-            Text(next.title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (next.title.isNotBlank()) {
+                Text(next.title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Button(onClick = onPlay, enabled = !isLoading) {
-                    if (isLoading) {
-                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Loading…")
-                    } else {
-                        Icon(Icons.Default.SkipNext, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(if (countdown != null) "Play in ${countdown}s" else "Play next")
+                Box(contentAlignment = Alignment.Center) {
+                    Button(onClick = onPlay, enabled = !isLoading, shape = RoundedCornerShape(12.dp), modifier = Modifier.focusRequester(focus)) {
+                        if (isLoading) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Loading…")
+                        } else {
+                            Icon(Icons.Default.SkipNext, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(if (countdown != null) "Next in ${countdown}s" else "Next episode")
+                        }
                     }
                 }
-                if (countdown != null) {
-                    TextButton(onClick = onCancel) { Text("Cancel", color = Color.White) }
+                if (showWatchCredits && !isLoading) {
+                    TextButton(onClick = onWatchCredits) { Text("Watch credits", color = Color.White) }
                 }
+            }
+            if (countdown != null) {
+                LinearProgressIndicator(
+                    progress = { 1f - countdown / 10f },
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = Color.White.copy(alpha = 0.15f)
+                )
             }
         }
     }
 }
 
-private const val NEXT_EPISODE_PROMPT_MS = 45_000L
+private const val LONG_PRESS_BOOST_MS = 450L
 
 private fun formatSpeed(speed: Float): String =
     if (speed == 1.0f) "Normal" else String.format(Locale.US, "%sx", speed.toString().removeSuffix(".0"))
-
-private fun formatDurationMs(ms: Long): String {
-    val totalSeconds = (ms / 1000L).coerceAtLeast(0L)
-    val hours = totalSeconds / 3600L
-    val minutes = (totalSeconds % 3600L) / 60L
-    val seconds = totalSeconds % 60L
-    return if (hours > 0L) {
-        String.format(Locale.US, "%d:%02d:%02d", hours, minutes, seconds)
-    } else {
-        String.format(Locale.US, "%02d:%02d", minutes, seconds)
-    }
-}
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this

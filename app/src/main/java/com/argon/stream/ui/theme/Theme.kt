@@ -78,6 +78,7 @@ fun ArgonTheme(
     MaterialTheme(
         colorScheme = colorScheme,
         typography = ArgonTypography,
+        shapes = ArgonShapes,
         content = content
     )
 }

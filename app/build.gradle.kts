@@ -24,8 +24,10 @@ android {
         applicationId = "com.argon.stream"
         minSdk = 26
         targetSdk = 35
-        versionCode = 9
-        versionName = "1.6.1"
+        versionCode = 10
+        versionName = "1.7.0"
+        // GitHub repository whose latest release is checked for app updates ("owner/name").
+        buildConfigField("String", "UPDATE_REPO", "\"sorcsorcsorc/ArgonStream\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

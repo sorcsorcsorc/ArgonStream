@@ -1,5 +1,6 @@
 package com.argon.stream.ui.screens.search
 
+import com.argon.stream.ui.components.ArgonFilterChip
 import androidx.compose.foundation.layout.Arrangement
 import com.argon.stream.ui.components.focusHighlight
 import androidx.compose.material3.TextButton
@@ -32,7 +33,6 @@ import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SearchOff
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
@@ -120,21 +120,21 @@ internal fun SearchContent(
         ) {
             val typeFilters = listOf(null to "All", MediaType.MOVIE to "Movies", MediaType.SERIES to "Series")
             items(typeFilters, key = { it.second }) { (type, label) ->
-                FilterChip(
+                ArgonFilterChip(
                     selected = state.selectedType == type,
                     onClick = { onTypeFilterChange(type) },
                     label = { Text(label) }
                 )
             }
             item(key = "rating") {
-                FilterChip(
+                ArgonFilterChip(
                     selected = state.minRating >= 7.0,
                     onClick = { onMinRatingChange(if (state.minRating >= 7.0) 0.0 else 7.0) },
                     label = { Text("Rated 7+") }
                 )
             }
             items(SortOrder.entries.filter { it != SortOrder.RELEVANCE }, key = { it.name }) { order ->
-                FilterChip(
+                ArgonFilterChip(
                     selected = state.sortOrder == order,
                     onClick = {
                         onSortOrderChange(if (state.sortOrder == order) SortOrder.RELEVANCE else order)

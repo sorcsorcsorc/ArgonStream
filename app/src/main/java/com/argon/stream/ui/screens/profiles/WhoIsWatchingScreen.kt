@@ -2,6 +2,7 @@ package com.argon.stream.ui.screens.profiles
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
@@ -222,15 +224,19 @@ private fun ProfileTile(
                 shape = CircleShape
             ).padding(4.dp)
         ) {
-            avatar()
-            if (showLock || showEdit) {
-                Surface(
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                    modifier = Modifier.align(Alignment.BottomEnd).size(28.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(if (showEdit) Icons.Default.Edit else Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(16.dp))
+            // The badge is anchored to the avatar itself (not the focus ring), so it always sits on the circle's edge.
+            Box {
+                avatar()
+                if (showLock || showEdit) {
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                        border = BorderStroke(2.dp, MaterialTheme.colorScheme.background),
+                        modifier = Modifier.align(Alignment.BottomEnd).offset(x = (-6).dp, y = (-6).dp).size(26.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(if (showEdit) Icons.Default.Edit else Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(14.dp))
+                        }
                     }
                 }
             }

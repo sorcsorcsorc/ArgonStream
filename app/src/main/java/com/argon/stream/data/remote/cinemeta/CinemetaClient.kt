@@ -42,7 +42,17 @@ data class CinemetaMetaDto(
     val genre: List<String>? = null,
     val cast: List<String>? = null,
     val videos: List<CinemetaVideoDto>? = null,
-    val trailers: List<CinemetaTrailerDto>? = null
+    val trailers: List<CinemetaTrailerDto>? = null,
+    /** Only on cinemeta-live: the billed cast with TMDB portraits. */
+    @SerialName("credits_cast") val creditsCast: List<CinemetaCreditDto>? = null
+)
+
+@Serializable
+data class CinemetaCreditDto(
+    val name: String = "",
+    val character: String? = null,
+    @SerialName("profile_path") val profilePath: String? = null,
+    val id: Int? = null
 )
 
 @Serializable
@@ -107,6 +117,13 @@ class CinemetaClient @Inject constructor(
         }
     }
 
+    /** Billed cast with photos from Cinemeta's live endpoint (the v3 meta only lists ~3 names). */
+    suspend fun fetchCredits(type: String, imdbId: String): List<CinemetaCreditDto> =
+        when (val res = getJson<CinemetaMetaResponse>("$LIVE_URL/meta/$type/${Uri.encode(imdbId)}.json")) {
+            is NetworkResult.Success -> res.data.meta?.creditsCast.orEmpty().filter { it.name.isNotBlank() }
+            is NetworkResult.Error -> emptyList()
+        }
+
     private suspend inline fun <reified T> getJson(url: String): NetworkResult<T> = safeApiCall {
         withContext(Dispatchers.IO) {
             val request = Request.Builder()
@@ -125,6 +142,7 @@ class CinemetaClient @Inject constructor(
 
     companion object {
         const val BASE_URL = "https://v3-cinemeta.strem.io"
+        const val LIVE_URL = "https://cinemeta-live.strem.io"
 
         /** Cinemeta catalog posters default to the "small" size; "medium" looks much sharper on phones. */
         fun upgradePosterUrl(url: String?): String? =

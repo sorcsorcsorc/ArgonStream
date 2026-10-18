@@ -1,5 +1,6 @@
 package com.argon.stream.ui.screens.details
 
+import com.argon.stream.ui.components.ArgonFilterChip
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -46,7 +47,6 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledIconButton
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -224,7 +224,7 @@ internal fun DetailsContent(
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = item.title,
-                            style = MaterialTheme.typography.headlineSmall,
+                            style = MaterialTheme.typography.headlineMedium,
                             maxLines = 3,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -244,6 +244,8 @@ internal fun DetailsContent(
                     Button(
                         onClick = { imdbId?.let { onSelectStreams(it, item.title) } },
                         enabled = imdbId != null,
+                        shape = RoundedCornerShape(14.dp),
+                        contentPadding = PaddingValues(vertical = 14.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(Icons.Default.PlayArrow, contentDescription = null)
@@ -370,7 +372,7 @@ internal fun DetailsContent(
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             items(details.seasons, key = { it.seasonNumber }) { season ->
-                                FilterChip(
+                                ArgonFilterChip(
                                     selected = state.selectedSeasonNumber == season.seasonNumber,
                                     onClick = { onSelectSeason(season.seasonNumber) },
                                     label = { Text(season.name) }
@@ -624,13 +626,22 @@ private fun DetailAction(
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(16.dp))
             .focusHighlight()
             .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 8.dp)
+            .padding(horizontal = 8.dp, vertical = 6.dp)
     ) {
-        Icon(icon, contentDescription = null, tint = if (active) activeTint else MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(modifier = Modifier.height(4.dp))
+        // Round tonal icon "buttons", tinted when on.
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(48.dp)
+                .clip(CircleShape)
+                .background(if (active) activeTint.copy(alpha = 0.18f) else MaterialTheme.colorScheme.surfaceContainerHigh)
+        ) {
+            Icon(icon, contentDescription = null, tint = if (active) activeTint else MaterialTheme.colorScheme.onSurface)
+        }
+        Spacer(modifier = Modifier.height(6.dp))
         Text(
             text = label,
             style = MaterialTheme.typography.labelMedium,

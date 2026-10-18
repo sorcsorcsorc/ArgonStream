@@ -21,18 +21,15 @@ data class CatalogPage(
 )
 
 /**
- * Genres offered for browsing. Only genres that both Cinemeta and TMDB can filter on are listed,
- * so a genre never silently returns nothing after a TMDB key is added or removed.
+ * Genres offered for browsing: every genre Cinemeta can filter on. TMDB is used for a genre only when
+ * it has a matching id; otherwise the grid falls back to Cinemeta, so no genre comes back empty.
  */
 object CatalogGenres {
     val MOVIE = listOf(
-        "Action", "Adventure", "Animation", "Comedy", "Crime", "Documentary", "Drama", "Family", "Fantasy",
-        "History", "Horror", "Mystery", "Romance", "Sci-Fi", "Thriller", "War", "Western"
+        "Action", "Adventure", "Animation", "Biography", "Comedy", "Crime", "Documentary", "Drama", "Family",
+        "Fantasy", "History", "Horror", "Mystery", "Romance", "Sci-Fi", "Sport", "Thriller", "War", "Western"
     )
-    val SERIES = listOf(
-        "Action", "Animation", "Comedy", "Crime", "Documentary", "Drama", "Family", "Mystery",
-        "Reality-TV", "Sci-Fi", "War", "Western"
-    )
+    val SERIES = MOVIE + listOf("Reality-TV", "Talk-Show", "Game-Show")
 
     fun forType(type: MediaType): List<String> = if (type == MediaType.MOVIE) MOVIE else SERIES
 
@@ -45,7 +42,7 @@ object CatalogGenres {
         "Romance" to 10749, "Sci-Fi" to 878, "Thriller" to 53, "War" to 10752, "Western" to 37
     )
     private val TMDB_TV = mapOf(
-        "Action" to 10759, "Animation" to 16, "Comedy" to 35, "Crime" to 80, "Documentary" to 99, "Drama" to 18,
-        "Family" to 10751, "Mystery" to 9648, "Reality-TV" to 10764, "Sci-Fi" to 10765, "War" to 10768, "Western" to 37
+        "Animation" to 16, "Comedy" to 35, "Crime" to 80, "Documentary" to 99, "Drama" to 18,
+        "Family" to 10751, "Mystery" to 9648, "Reality-TV" to 10764, "Talk-Show" to 10767, "Western" to 37
     )
 }

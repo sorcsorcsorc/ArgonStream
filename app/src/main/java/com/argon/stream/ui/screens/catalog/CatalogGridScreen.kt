@@ -1,5 +1,6 @@
 package com.argon.stream.ui.screens.catalog
 
+import com.argon.stream.ui.components.ArgonFilterChip
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,7 +20,6 @@ import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.SearchOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -93,7 +93,7 @@ internal fun CatalogGridContent(
                 modifier = Modifier.padding(horizontal = 16.dp)
             ) {
                 state.switchableTypes.forEach { type ->
-                    FilterChip(
+                    ArgonFilterChip(
                         selected = state.query?.type == type,
                         onClick = { onSetType(type) },
                         label = { Text(if (type == MediaType.MOVIE) "Movies" else "Series") }

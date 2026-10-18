@@ -1,5 +1,6 @@
 package com.argon.stream.ui.screens.streams
 
+import com.argon.stream.ui.components.ArgonFilterChip
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -37,7 +38,6 @@ import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -325,7 +325,7 @@ private fun StreamList(
                         )
                     }
                     items(StreamSort.entries) { sort ->
-                        FilterChip(
+                        ArgonFilterChip(
                             selected = state.sort == sort,
                             onClick = { onSetSort(sort) },
                             label = { Text(sort.label) }
@@ -339,14 +339,14 @@ private fun StreamList(
             item(key = "filters") {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     item {
-                        FilterChip(
+                        ArgonFilterChip(
                             selected = state.selectedResolutionFilter == null,
                             onClick = { onSelectFilter(null) },
                             label = { Text("All") }
                         )
                     }
                     items(state.availableResolutions) { res ->
-                        FilterChip(
+                        ArgonFilterChip(
                             selected = state.selectedResolutionFilter == res,
                             onClick = { onSelectFilter(res) },
                             label = { Text(if (res == "2160p") "4K" else res) }
