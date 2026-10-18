@@ -6,7 +6,9 @@ import androidx.lifecycle.viewModelScope
 import com.argon.stream.core.download.DownloadStartResult
 import com.argon.stream.core.download.StreamDownloader
 import com.argon.stream.core.network.NetworkResult
+import com.argon.stream.core.player.DeviceCodecSupport
 import com.argon.stream.core.player.ExternalPlayerLauncher
+import com.argon.stream.core.player.StreamCompatibility
 import com.argon.stream.core.player.PlaybackRequest
 import com.argon.stream.core.player.PlaybackSessionStore
 import com.argon.stream.data.local.StreamChoiceDao
@@ -47,6 +49,8 @@ data class MultiFilePromptState(
     val forDownload: Boolean = false
 )
 
+enum class StreamSort(val label: String) { BEST("Best"), SIZE("Largest"), SEEDERS("Most seeders") }
+
 data class StreamSelectionUiState(
     val stremioVideoId: String = "",
     val title: String = "",
@@ -65,6 +69,7 @@ data class StreamSelectionUiState(
     val toastMessage: String? = null,
     /** uniqueKey of the stream matching the source picked last time for this title. */
     val lastUsedKey: String? = null,
+    val sort: StreamSort = StreamSort.BEST,
     val toastId: Int = 0
 )
 
@@ -79,7 +84,8 @@ class StreamSelectionViewModel @Inject constructor(
     private val externalPlayerLauncher: ExternalPlayerLauncher,
     private val streamDownloader: StreamDownloader,
     private val profileRepository: ProfileRepository,
-    private val streamChoiceDao: StreamChoiceDao
+    private val streamChoiceDao: StreamChoiceDao,
+    private val deviceCodecSupport: DeviceCodecSupport
 ) : ViewModel() {
 
     val stremioVideoId: String = savedStateHandle["videoId"] ?: ""
@@ -133,10 +139,12 @@ class StreamSelectionViewModel @Inject constructor(
                 }
             } else {
                 candidates
-            }
+            }.map { it.copy(compatibilityWarning = StreamCompatibility.warning(it, deviceCodecSupport.caps)) }
 
+            // Streams this device can probably play come first; then instant, quality and seeders.
             val sorted = enriched.sortedWith(
-                compareByDescending<StreamCandidate> { prefs.preferCachedDebridStreams && it.isCachedOnDebrid }
+                compareBy<StreamCandidate> { it.compatibilityWarning != null }
+                    .thenByDescending { prefs.preferCachedDebridStreams && it.isCachedOnDebrid }
                     .thenByDescending { StreamMetadataParser.resolutionScore(it.resolution) }
                     .thenByDescending { it.seeders ?: 0 }
             )
@@ -161,7 +169,7 @@ class StreamSelectionViewModel @Inject constructor(
                     isLoading = false,
                     availableResolutions = resolutions,
                     selectedResolutionFilter = filter,
-                    streams = applyFilter(filter),
+                    streams = applyFilter(filter, state.sort),
                     hiddenByQualityLimit = sorted.size - withinLimit.size,
                     maxResolution = prefs.preferredMaxResolution,
                     hasStreamAddons = hasStreamAddons,
@@ -172,11 +180,21 @@ class StreamSelectionViewModel @Inject constructor(
         }
     }
 
-    private fun applyFilter(resolution: String?): List<StreamCandidate> =
-        if (resolution == null) allStreams else allStreams.filter { it.resolution == resolution }
+    private fun applyFilter(resolution: String?, sort: StreamSort): List<StreamCandidate> {
+        val filtered = if (resolution == null) allStreams else allStreams.filter { it.resolution == resolution }
+        return when (sort) {
+            StreamSort.BEST -> filtered
+            StreamSort.SIZE -> filtered.sortedByDescending { it.sizeBytes ?: 0L }
+            StreamSort.SEEDERS -> filtered.sortedByDescending { it.seeders ?: -1 }
+        }
+    }
 
     fun setResolutionFilter(resolution: String?) {
-        _uiState.update { it.copy(selectedResolutionFilter = resolution, streams = applyFilter(resolution)) }
+        _uiState.update { it.copy(selectedResolutionFilter = resolution, streams = applyFilter(resolution, it.sort)) }
+    }
+
+    fun setSort(sort: StreamSort) {
+        _uiState.update { it.copy(sort = sort, streams = applyFilter(it.selectedResolutionFilter, sort)) }
     }
 
     fun dismissStatusDialog() {

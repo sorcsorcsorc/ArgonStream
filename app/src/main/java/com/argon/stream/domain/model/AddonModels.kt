@@ -39,6 +39,8 @@ data class StreamCandidate(
     val filenameHint: String? = null,
     /** Stremio behaviorHints.bingeGroup: same value = same release/source across episodes. */
     val bingeGroup: String? = null,
+    /** Why this stream may not play on this device (codec / 4K / audio format), or null. */
+    val compatibilityWarning: String? = null,
     val isCachedOnDebrid: Boolean = false
 )
 

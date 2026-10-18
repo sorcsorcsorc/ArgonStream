@@ -378,8 +378,9 @@ class ScreenLayoutScreenshotTest {
                 directUrl = "https://example.invalid/1", resolution = "1080p", codec = "HEVC", hdrTag = null, audioTag = "Surround",
                 sizeDisplay = "1.4 GB", seeders = 152, languages = listOf("EN"), isCachedOnDebrid = true),
             StreamCandidate("b", "aio", "AIOStreams | TorBox", "Breaking.Bad.S01E01.2160p.WEB-DL.DV.HDR10.DDP5.1.mkv",
-                directUrl = "https://example.invalid/2", resolution = "1080p", codec = "H.264", hdrTag = "HDR", audioTag = "EAC3",
-                sizeDisplay = "6.2 GB", seeders = 40, isCachedOnDebrid = false),
+                directUrl = "https://example.invalid/2", resolution = "1080p", codec = "H.264", hdrTag = "Dolby Vision", audioTag = "TrueHD",
+                sizeDisplay = "6.2 GB", seeders = 40, isCachedOnDebrid = false,
+                compatibilityWarning = "Dolby Vision may show wrong colours; TrueHD audio may be silent"),
             StreamCandidate("c", "torrentio", "Torrentio", "Breaking Bad S01E01 720p",
                 infoHash = "0123456789abcdef0123456789abcdef01234567", resolution = "720p", codec = null, hdrTag = null, audioTag = null,
                 sizeDisplay = "650 MB", seeders = 12)

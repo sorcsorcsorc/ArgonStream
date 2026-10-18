@@ -88,6 +88,7 @@ fun StreamSelectionScreen(
         onSelectFilter = viewModel::setResolutionFilter,
         onSelectStream = viewModel::onCandidateClicked,
         onDownloadStream = viewModel::onDownloadClicked,
+        onSetSort = viewModel::setSort,
         onDismissStatus = viewModel::dismissStatusDialog,
         onDismissMultiFile = viewModel::dismissMultiFileDialog,
         onSelectMultiFile = viewModel::onMultiFileSelected,
@@ -105,6 +106,7 @@ internal fun StreamSelectionContent(
     onSelectFilter: (String?) -> Unit,
     onSelectStream: (StreamCandidate) -> Unit,
     onDownloadStream: (StreamCandidate) -> Unit = {},
+    onSetSort: (StreamSort) -> Unit = {},
     onDismissStatus: () -> Unit,
     onDismissMultiFile: () -> Unit,
     onSelectMultiFile: (Int, com.argon.stream.domain.model.TorBoxMediaFile) -> Unit,
@@ -257,7 +259,8 @@ internal fun StreamSelectionContent(
                     state = state,
                     onSelectFilter = onSelectFilter,
                     onSelectStream = onSelectStream,
-                    onDownloadStream = onDownloadStream
+                    onDownloadStream = onDownloadStream,
+                    onSetSort = onSetSort
                 )
             }
         }
@@ -300,7 +303,8 @@ private fun StreamList(
     state: StreamSelectionUiState,
     onSelectFilter: (String?) -> Unit,
     onSelectStream: (StreamCandidate) -> Unit,
-    onDownloadStream: (StreamCandidate) -> Unit
+    onDownloadStream: (StreamCandidate) -> Unit,
+    onSetSort: (StreamSort) -> Unit
 ) {
     var showWarnings by rememberSaveable { mutableStateOf(false) }
 
@@ -309,6 +313,28 @@ private fun StreamList(
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
+        if (state.streams.size > 1 || state.availableResolutions.size > 1) {
+            item(key = "sort") {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    item {
+                        Text(
+                            "Sort",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 14.dp, end = 4.dp)
+                        )
+                    }
+                    items(StreamSort.entries) { sort ->
+                        FilterChip(
+                            selected = state.sort == sort,
+                            onClick = { onSetSort(sort) },
+                            label = { Text(sort.label) }
+                        )
+                    }
+                }
+            }
+        }
+
         if (state.availableResolutions.size > 1) {
             item(key = "filters") {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -404,6 +430,13 @@ private fun StreamCandidateCard(
                             showBolt = true
                         )
                     }
+                    if (candidate.compatibilityWarning != null) {
+                        Badge(
+                            text = "May not play",
+                            container = MaterialTheme.colorScheme.errorContainer,
+                            content = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    }
                     if (isLastUsed) {
                         Badge(
                             text = "Last used",
@@ -439,6 +472,13 @@ private fun StreamCandidateCard(
                         text = metadata.joinToString("  ·  "),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                candidate.compatibilityWarning?.let { warning ->
+                    Text(
+                        text = warning,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error
                     )
                 }
                 Text(
