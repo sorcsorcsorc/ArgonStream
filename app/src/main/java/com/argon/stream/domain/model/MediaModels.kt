@@ -90,5 +90,7 @@ data class CatalogRow(
     val id: String,
     val title: String,
     val subtitle: String? = null,
-    val items: List<MediaItem>
+    val items: List<MediaItem>,
+    /** Opens the full, endlessly scrolling version of this row ("See all"). */
+    val query: CatalogQuery? = null
 )

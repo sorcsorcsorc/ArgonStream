@@ -25,6 +25,7 @@ data class HomeUiState(
     val filterType: MediaType? = null,
     val featuredItem: MediaItem? = null,
     val continueWatching: List<WatchProgressItem> = emptyList(),
+    val myList: List<MediaItem> = emptyList(),
     val catalogRows: List<CatalogRow> = emptyList(),
     val isTmdbConfigured: Boolean = false,
     val activeProfile: Profile? = null,
@@ -50,6 +51,11 @@ class HomeViewModel @Inject constructor(
             }
         }
         viewModelScope.launch {
+            catalogRepository.observeWatchlistItems().collect { items ->
+                _uiState.update { it.copy(myList = items) }
+            }
+        }
+        viewModelScope.launch {
             combine(profileRepository.profiles, profileRepository.activeProfileId) { profiles, id ->
                 profiles.firstOrNull { it.id == id }
             }.collect { profile -> _uiState.update { it.copy(activeProfile = profile) } }
@@ -58,6 +64,10 @@ class HomeViewModel @Inject constructor(
     }
 
     fun switchProfile() = profileRepository.requestSwitch()
+
+    fun removeFromContinueWatching(item: WatchProgressItem) {
+        viewModelScope.launch { catalogRepository.removeFromContinueWatching(item.mediaItem) }
+    }
 
     /** Reloads when the catalog source changed (e.g. a TMDB key was added in Settings). */
     fun onScreenVisible() {

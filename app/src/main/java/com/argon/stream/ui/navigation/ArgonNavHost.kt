@@ -53,6 +53,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.argon.stream.domain.model.MediaItem
 import com.argon.stream.ui.screens.addons.AddonManagerScreen
+import com.argon.stream.ui.screens.catalog.CatalogGridScreen
 import com.argon.stream.ui.screens.details.TitleDetailsScreen
 import com.argon.stream.ui.screens.downloads.DownloadsScreen
 import com.argon.stream.ui.screens.home.HomeScreen
@@ -154,6 +155,13 @@ fun ArgonNavHost(
                     composable(TopLevelDestination.HOME.route) {
                         HomeScreen(
                             onOpenMediaDetails = openDetails,
+                            onOpenCatalog = { query, title ->
+                                navController.navigate(
+                                    "catalog/${query.kind.name}/${query.type?.name ?: "ALL"}" +
+                                        "?genre=${Uri.encode(query.genre.orEmpty())}&title=${Uri.encode(title)}"
+                                )
+                            },
+                            onOpenLibrary = { navController.navigateToTopLevel(TopLevelDestination.LIBRARY) },
                             onOpenSettings = { navController.navigateToTopLevel(TopLevelDestination.SETTINGS) },
                             onOpenSearch = { navController.navigateToTopLevel(TopLevelDestination.SEARCH) }
                         )
@@ -183,6 +191,18 @@ fun ArgonNavHost(
 
                     composable(TopLevelDestination.SETTINGS.route) {
                         SettingsScreen()
+                    }
+
+                    composable(
+                        route = "catalog/{kind}/{type}?genre={genre}&title={title}",
+                        arguments = listOf(
+                            navArgument("kind") { type = NavType.StringType },
+                            navArgument("type") { type = NavType.StringType },
+                            navArgument("genre") { type = NavType.StringType; defaultValue = "" },
+                            navArgument("title") { type = NavType.StringType; defaultValue = "" }
+                        )
+                    ) {
+                        CatalogGridScreen(onBack = { navController.popBackStack() }, onOpenMediaDetails = openDetails)
                     }
 
                     composable(

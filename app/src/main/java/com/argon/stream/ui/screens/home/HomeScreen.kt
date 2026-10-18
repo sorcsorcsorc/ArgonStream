@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -27,6 +28,8 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -40,6 +43,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -57,7 +61,11 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import com.argon.stream.data.repository.Profile
+import com.argon.stream.domain.model.CatalogGenres
+import com.argon.stream.domain.model.CatalogKind
+import com.argon.stream.domain.model.CatalogQuery
 import com.argon.stream.domain.model.CatalogRow
+import com.argon.stream.domain.model.WatchProgressItem
 import com.argon.stream.ui.screens.profiles.ProfileAvatar
 import com.argon.stream.domain.model.MediaItem
 import com.argon.stream.domain.model.MediaType
@@ -71,6 +79,8 @@ fun HomeScreen(
     onOpenMediaDetails: (MediaItem) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenSearch: () -> Unit,
+    onOpenCatalog: (query: CatalogQuery, title: String) -> Unit = { _, _ -> },
+    onOpenLibrary: () -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -84,7 +94,10 @@ fun HomeScreen(
         onOpenSearch = onOpenSearch,
         onSetFilter = viewModel::setFilter,
         onRetry = viewModel::refreshCatalogs,
-        onSwitchProfile = viewModel::switchProfile
+        onSwitchProfile = viewModel::switchProfile,
+        onOpenCatalog = onOpenCatalog,
+        onOpenLibrary = onOpenLibrary,
+        onRemoveContinueWatching = viewModel::removeFromContinueWatching
     )
 }
 
@@ -96,10 +109,29 @@ internal fun HomeContent(
     onOpenSearch: () -> Unit,
     onSetFilter: (MediaType?) -> Unit,
     onRetry: () -> Unit,
-    onSwitchProfile: () -> Unit = {}
+    onSwitchProfile: () -> Unit = {},
+    onOpenCatalog: (query: CatalogQuery, title: String) -> Unit = { _, _ -> },
+    onOpenLibrary: () -> Unit = {},
+    onRemoveContinueWatching: (WatchProgressItem) -> Unit = {}
 ) {
     val cardWidth = rememberPosterCardWidth()
     var tipDismissed by rememberSaveable { mutableStateOf(false) }
+    var pendingRemoval by remember { mutableStateOf<WatchProgressItem?>(null) }
+
+    pendingRemoval?.let { item ->
+        AlertDialog(
+            onDismissRequest = { pendingRemoval = null },
+            title = { Text("Remove from Continue Watching?") },
+            text = { Text("\"${item.mediaItem.title}\" will be removed from this row. Your watched marks stay.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    onRemoveContinueWatching(item)
+                    pendingRemoval = null
+                }) { Text("Remove") }
+            },
+            dismissButton = { TextButton(onClick = { pendingRemoval = null }) { Text("Cancel") } }
+        )
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -199,6 +231,7 @@ internal fun HomeContent(
                                     progressFraction = progressItem.progressFraction,
                                     episodeBadge = badge,
                                     onClick = onOpenMediaDetails,
+                                    onLongClick = { pendingRemoval = progressItem },
                                     modifier = Modifier.width(cardWidth)
                                 )
                             }
@@ -206,8 +239,36 @@ internal fun HomeContent(
                     }
                 }
 
-                items(items = state.catalogRows, key = { it.id }) { row ->
-                    CatalogRowSection(row = row, cardWidth = cardWidth, onItemClick = onOpenMediaDetails)
+                val myList = state.myList.filter { state.filterType == null || it.type == state.filterType }
+                if (myList.isNotEmpty()) {
+                    item(key = "my_list") {
+                        PosterRow(title = "My List", onSeeAll = onOpenLibrary) {
+                            items(myList, key = { "my_${it.type}_${it.id}" }) { media ->
+                                MediaCard(item = media, onClick = onOpenMediaDetails, modifier = Modifier.width(cardWidth))
+                            }
+                        }
+                    }
+                }
+
+                state.catalogRows.forEachIndexed { index, row ->
+                    item(key = row.id) {
+                        CatalogRowSection(
+                            row = row,
+                            cardWidth = cardWidth,
+                            onItemClick = onOpenMediaDetails,
+                            onSeeAll = row.query?.let { query -> { onOpenCatalog(query, row.title) } }
+                        )
+                    }
+                    if (index == 0) {
+                        item(key = "genres") {
+                            GenreSection(
+                                type = state.filterType ?: MediaType.MOVIE,
+                                onOpenGenre = { genre, type ->
+                                    onOpenCatalog(CatalogQuery(CatalogKind.GENRE, type, genre), genre)
+                                }
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -389,16 +450,30 @@ private fun HeroMetaLine(item: MediaItem) {
 @Composable
 private fun PosterRow(
     title: String,
+    onSeeAll: (() -> Unit)? = null,
     content: LazyListScope.() -> Unit
 ) {
     Column {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleLarge,
-            color = MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier.padding(horizontal = 16.dp)
-        )
-        Spacer(modifier = Modifier.height(10.dp))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 4.dp)
+                .heightIn(min = 40.dp)
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onBackground,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            if (onSeeAll != null) {
+                TextButton(onClick = onSeeAll) { Text("See all") }
+            }
+        }
+        Spacer(modifier = Modifier.height(4.dp))
         LazyRow(
             contentPadding = PaddingValues(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -411,15 +486,38 @@ private fun PosterRow(
 private fun CatalogRowSection(
     row: CatalogRow,
     cardWidth: Dp,
-    onItemClick: (MediaItem) -> Unit
+    onItemClick: (MediaItem) -> Unit,
+    onSeeAll: (() -> Unit)? = null
 ) {
-    PosterRow(title = row.title) {
+    PosterRow(title = row.title, onSeeAll = onSeeAll) {
         items(items = row.items, key = { "${it.type}_${it.id}" }) { media ->
             MediaCard(
                 item = media,
                 onClick = onItemClick,
                 modifier = Modifier.width(cardWidth)
             )
+        }
+    }
+}
+
+/** "Browse by genre" chips; each opens an endlessly scrolling genre grid. */
+@Composable
+private fun GenreSection(type: MediaType, onOpenGenre: (genre: String, type: MediaType) -> Unit) {
+    Column {
+        Text(
+            text = "Browse by genre",
+            style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.onBackground,
+            modifier = Modifier.padding(horizontal = 16.dp)
+        )
+        Spacer(modifier = Modifier.height(10.dp))
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(CatalogGenres.forType(type), key = { it }) { genre ->
+                AssistChip(onClick = { onOpenGenre(genre, type) }, label = { Text(genre) })
+            }
         }
     }
 }

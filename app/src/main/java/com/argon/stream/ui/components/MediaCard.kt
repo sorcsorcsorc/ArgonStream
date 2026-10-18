@@ -1,7 +1,8 @@
 package com.argon.stream.ui.components
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -39,21 +40,26 @@ import coil3.compose.AsyncImage
 import com.argon.stream.domain.model.MediaItem
 import java.util.Locale
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MediaCard(
     item: MediaItem,
     onClick: (MediaItem) -> Unit,
     modifier: Modifier = Modifier,
     progressFraction: Float? = null,
-    episodeBadge: String? = null
+    episodeBadge: String? = null,
+    onLongClick: (() -> Unit)? = null
 ) {
     Column(
         modifier = modifier
             .focusHighlight(zoom = true)
-            .clickable(
+            .combinedClickable(
                 role = Role.Button,
-                onClickLabel = "Open details for ${item.title}"
-            ) { onClick(item) }
+                onClickLabel = "Open details for ${item.title}",
+                onLongClick = onLongClick,
+                onLongClickLabel = if (onLongClick != null) "More options" else null,
+                onClick = { onClick(item) }
+            )
             .semantics {
                 contentDescription = "${item.title}, ${item.releaseYear ?: ""}"
             }

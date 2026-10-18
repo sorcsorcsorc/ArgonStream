@@ -18,7 +18,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import com.argon.stream.domain.model.ArgonPreferences
 import com.argon.stream.domain.model.CastMember
+import com.argon.stream.domain.model.CatalogKind
+import com.argon.stream.domain.model.CatalogQuery
 import com.argon.stream.domain.model.CatalogRow
+import com.argon.stream.ui.screens.catalog.CatalogGridContent
+import com.argon.stream.ui.screens.catalog.CatalogGridUiState
 import com.argon.stream.domain.model.EpisodeItem
 import com.argon.stream.domain.model.ExternalPlayerTarget
 import com.argon.stream.domain.model.InstalledAddon
@@ -113,13 +117,33 @@ class ScreenLayoutScreenshotTest {
                 continueWatching = listOf(
                     WatchProgressItem(sampleSeries.first(), 2, 5, "S2E5", 1_200_000, 2_700_000, 0)
                 ),
+                myList = sampleMovies.drop(2),
                 catalogRows = listOf(
-                    CatalogRow("popular_movies", "Popular Movies", null, sampleMovies),
-                    CatalogRow("popular_series", "Popular Series", null, sampleSeries)
+                    CatalogRow("popular_movies", "Popular Movies", null, sampleMovies, CatalogQuery(CatalogKind.POPULAR, MediaType.MOVIE)),
+                    CatalogRow("popular_series", "Popular Series", null, sampleSeries, CatalogQuery(CatalogKind.POPULAR, MediaType.SERIES))
                 ),
                 isTmdbConfigured = false
             ),
             onOpenMediaDetails = {}, onOpenSettings = {}, onOpenSearch = {}, onSetFilter = {}, onRetry = {}
+        )
+    }
+
+    @Test
+    @Config(qualifiers = "w393dp-h1700dp-xxhdpi")
+    fun homeFullLength() = capture("01c_home_full_length") { HomeScreenSample() }
+
+    @Test
+    fun catalogGrid() = capture("15_catalog_grid_genre") {
+        CatalogGridContent(
+            state = CatalogGridUiState(
+                title = "Sci-Fi",
+                query = CatalogQuery(CatalogKind.GENRE, MediaType.MOVIE, "Sci-Fi"),
+                items = sampleMovies + sampleSeries,
+                isLoading = false,
+                isLoadingMore = true,
+                switchableTypes = listOf(MediaType.MOVIE, MediaType.SERIES)
+            ),
+            onBack = {}, onOpenMediaDetails = {}, onSetType = {}, onLoadMore = {}
         )
     }
 

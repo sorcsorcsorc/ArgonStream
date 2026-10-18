@@ -15,6 +15,10 @@ import com.argon.stream.data.remote.tmdb.TmdbDetailsDto
 import com.argon.stream.data.remote.tmdb.TmdbMediaDto
 import com.argon.stream.data.remote.wikipedia.WikipediaPhotoClient
 import com.argon.stream.domain.model.CastMember
+import com.argon.stream.domain.model.CatalogGenres
+import com.argon.stream.domain.model.CatalogKind
+import com.argon.stream.domain.model.CatalogPage
+import com.argon.stream.domain.model.CatalogQuery
 import com.argon.stream.domain.model.CatalogRow
 import com.argon.stream.domain.model.EpisodeItem
 import com.argon.stream.domain.model.MediaDetails
@@ -109,6 +113,15 @@ class CatalogRepository @Inject constructor(
     fun observeWatchlist(): Flow<List<WatchlistEntity>> =
         profileRepository.activeProfileId.flatMapLatest { watchlistDao.observeWatchlist(it) }
 
+    fun observeWatchlistItems(): Flow<List<MediaItem>> = observeWatchlist().map { rows ->
+        rows.map {
+            MediaItem(
+                id = it.mediaId, tmdbId = it.tmdbId, imdbId = it.imdbId, title = it.title, type = it.mediaType,
+                posterUrl = it.posterUrl, backdropUrl = it.backdropUrl, overview = "", releaseYear = it.releaseYear, rating = it.rating
+            )
+        }
+    }
+
     fun observeFavorites(): Flow<List<WatchlistEntity>> =
         profileRepository.activeProfileId.flatMapLatest { watchlistDao.observeFavorites(it) }
 
@@ -174,19 +187,19 @@ class CatalogRepository @Inject constructor(
 
                 listOfNotNull(
                     trendingDeferred.await()?.let { res ->
-                        CatalogRow("trending_all", "Trending This Week", null, res.results.mapNotNull { it.toDomain() })
+                        CatalogRow("trending_all", "Trending This Week", null, res.results.mapNotNull { it.toDomain() }, CatalogQuery(CatalogKind.TRENDING, null))
                     },
                     popMoviesDeferred.await()?.let { res ->
-                        CatalogRow("popular_movies", "Popular Movies", null, res.results.mapNotNull { it.toDomain(MediaType.MOVIE) })
+                        CatalogRow("popular_movies", "Popular Movies", null, res.results.mapNotNull { it.toDomain(MediaType.MOVIE) }, CatalogQuery(CatalogKind.POPULAR, MediaType.MOVIE))
                     },
                     popSeriesDeferred.await()?.let { res ->
-                        CatalogRow("popular_series", "Popular Series", null, res.results.mapNotNull { it.toDomain(MediaType.SERIES) })
+                        CatalogRow("popular_series", "Popular Series", null, res.results.mapNotNull { it.toDomain(MediaType.SERIES) }, CatalogQuery(CatalogKind.POPULAR, MediaType.SERIES))
                     },
                     topMoviesDeferred.await()?.let { res ->
-                        CatalogRow("top_movies", "Top Rated Movies", null, res.results.mapNotNull { it.toDomain(MediaType.MOVIE) })
+                        CatalogRow("top_movies", "Top Rated Movies", null, res.results.mapNotNull { it.toDomain(MediaType.MOVIE) }, CatalogQuery(CatalogKind.TOP_RATED, MediaType.MOVIE))
                     },
                     topSeriesDeferred.await()?.let { res ->
-                        CatalogRow("top_series", "Top Rated Series", null, res.results.mapNotNull { it.toDomain(MediaType.SERIES) })
+                        CatalogRow("top_series", "Top Rated Series", null, res.results.mapNotNull { it.toDomain(MediaType.SERIES) }, CatalogQuery(CatalogKind.TOP_RATED, MediaType.SERIES))
                     }
                 ).filter { it.items.isNotEmpty() }
             }
@@ -212,7 +225,10 @@ class CatalogRepository @Inject constructor(
                 ?.mapNotNull { it.toDomain() }
                 ?.distinctBy { it.id }
                 ?.takeIf { it.isNotEmpty() }
-                ?.let { CatalogRow(spec.id, spec.title, null, it) }
+                ?.let {
+                    val kind = if (spec.catalogId == "top") CatalogKind.POPULAR else CatalogKind.TOP_RATED
+                    CatalogRow(spec.id, spec.title, null, it, CatalogQuery(kind, spec.type))
+                }
         }
 
         if (rows.isEmpty()) {
@@ -224,6 +240,54 @@ class CatalogRepository @Inject constructor(
         } else {
             NetworkResult.Success(rows)
         }
+    }
+
+    /**
+     * One page of a full catalog for the "See all" / genre grids.
+     * [cursor] starts at 0; pass back [CatalogPage.nextCursor] to continue.
+     */
+    suspend fun loadCatalogPage(query: CatalogQuery, cursor: Int): NetworkResult<CatalogPage> {
+        val apiKey = getTmdbApiKeyOrNull()
+        val type = query.type ?: MediaType.MOVIE
+
+        if (apiKey != null) {
+            val page = cursor + 1
+            return safeApiCall {
+                val response = when (query.kind) {
+                    CatalogKind.TRENDING -> tmdbApi.getTrendingAll(apiKey, page)
+                    CatalogKind.POPULAR -> if (type == MediaType.MOVIE) tmdbApi.getPopularMovies(apiKey, page) else tmdbApi.getPopularSeries(apiKey, page)
+                    CatalogKind.TOP_RATED -> if (type == MediaType.MOVIE) tmdbApi.getTopRatedMovies(apiKey, page) else tmdbApi.getTopRatedSeries(apiKey, page)
+                    CatalogKind.GENRE -> {
+                        val genreId = query.genre?.let { CatalogGenres.tmdbGenreId(type, it) }
+                            ?: throw IllegalArgumentException("Genre not available for this type")
+                        if (type == MediaType.MOVIE) tmdbApi.discoverMovies(apiKey, genreId.toString(), page)
+                        else tmdbApi.discoverSeries(apiKey, genreId.toString(), page)
+                    }
+                }
+                val forced = if (query.kind == CatalogKind.TRENDING && query.type == null) null else type
+                CatalogPage(
+                    items = response.results.mapNotNull { it.toDomain(forced) },
+                    nextCursor = if (page < response.totalPages && response.results.isNotEmpty()) cursor + 1 else null
+                )
+            }
+        }
+
+        val catalogId = if (query.kind == CatalogKind.TOP_RATED) "imdbRating" else "top"
+        val genre = query.genre.takeIf { query.kind == CatalogKind.GENRE }
+        return when (val res = cinemeta.fetchCatalog(type.toStremioType(), catalogId, genre = genre, skip = cursor)) {
+            is NetworkResult.Success -> NetworkResult.Success(
+                CatalogPage(
+                    items = res.data.mapNotNull { it.toDomain(type) },
+                    nextCursor = if (res.data.isEmpty()) null else cursor + res.data.size
+                )
+            )
+            is NetworkResult.Error -> res
+        }
+    }
+
+    /** Drops a title from Continue Watching (the player stores one entry per movie / series). */
+    suspend fun removeFromContinueWatching(item: MediaItem) {
+        watchHistoryDao.removeWatchProgress(profileId, "${item.type.name.lowercase()}:${item.id}")
     }
 
     suspend fun searchCatalog(

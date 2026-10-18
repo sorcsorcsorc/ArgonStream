@@ -79,9 +79,16 @@ class CinemetaClient @Inject constructor(
     suspend fun fetchCatalog(
         type: String,
         catalogId: String,
-        search: String? = null
+        search: String? = null,
+        genre: String? = null,
+        skip: Int = 0
     ): NetworkResult<List<CinemetaMetaDto>> {
-        val extra = search?.let { "/search=${Uri.encode(it)}" }.orEmpty()
+        val extras = listOfNotNull(
+            search?.let { "search=${Uri.encode(it)}" },
+            genre?.let { "genre=${Uri.encode(it)}" },
+            skip.takeIf { it > 0 }?.let { "skip=$it" }
+        )
+        val extra = if (extras.isEmpty()) "" else "/" + extras.joinToString("&")
         return when (val res = getJson<CinemetaCatalogResponse>("$BASE_URL/catalog/$type/$catalogId$extra.json")) {
             is NetworkResult.Success -> NetworkResult.Success(res.data.metas)
             is NetworkResult.Error -> res
