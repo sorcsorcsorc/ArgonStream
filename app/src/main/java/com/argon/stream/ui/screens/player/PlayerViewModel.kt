@@ -27,6 +27,7 @@ import com.argon.stream.core.player.ExternalPlayerLauncher
 import com.argon.stream.core.player.PlaybackErrorClassifier
 import com.argon.stream.core.player.PlaybackRequest
 import com.argon.stream.core.player.PlaybackSessionStore
+import com.argon.stream.core.player.SubtitleLanguages
 import com.argon.stream.data.local.UserPreferencesRepository
 import com.argon.stream.data.local.WatchHistoryDao
 import com.argon.stream.data.local.WatchHistoryEntity
@@ -158,6 +159,7 @@ class PlayerViewModel @Inject constructor(
     private var autoPlayNextEnabled = true
     private var countdownJob: Job? = null
     private var sleepJob: Job? = null
+    private var preferredSubtitleLanguage: String? = null
 
     val exoPlayer: ExoPlayer = buildPlayer()
     private val userAttachedSubtitles = mutableListOf<ExternalSubtitleTrack>()
@@ -262,9 +264,10 @@ class PlayerViewModel @Inject constructor(
             val prefs = preferencesRepository.preferencesFlow.first()
             exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon()
                 .setPreferredAudioLanguage(prefs.preferredAudioLanguage.takeIf { it.isNotBlank() })
-                .setPreferredTextLanguage(prefs.preferredSubtitleLanguage.takeIf { it.isNotBlank() })
+                .setPreferredTextLanguages(*SubtitleLanguages.priorityOrder(prefs.preferredSubtitleLanguage).toTypedArray())
                 .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, prefs.subtitlesDisabledByDefault)
                 .build()
+            preferredSubtitleLanguage = prefs.preferredSubtitleLanguage
             _uiState.update { it.copy(subtitlesEnabled = !prefs.subtitlesDisabledByDefault) }
             autoPlayNextEnabled = prefs.autoPlayNextEpisode
             startCurrentRequest()
@@ -420,10 +423,16 @@ class PlayerViewModel @Inject constructor(
     // endregion
 
     private fun prepareAndPlayMedia(resumePositionMs: Long, subtitles: List<ExternalSubtitleTrack>) {
-        val subtitleConfigs = subtitles.map { sub ->
+        // Albanian, then English (after the user's own choice) come first; the best match is the default track.
+        val ordered = subtitles.sortedBy { SubtitleLanguages.rank(it.languageCode, preferredSubtitleLanguage) }
+        val defaultId = ordered.firstOrNull()?.takeIf {
+            SubtitleLanguages.rank(it.languageCode, preferredSubtitleLanguage) < SubtitleLanguages.priorityOrder(preferredSubtitleLanguage).size
+        }?.id
+        val subtitleConfigs = ordered.map { sub ->
             MediaItem.SubtitleConfiguration.Builder(Uri.parse(sub.url))
+                .setSelectionFlags(if (sub.id == defaultId) C.SELECTION_FLAG_DEFAULT else 0)
                 .setMimeType(if (sub.mimeType == "text/vtt") MimeTypes.TEXT_VTT else MimeTypes.APPLICATION_SUBRIP)
-                .setLanguage(sub.languageCode)
+                .setLanguage(SubtitleLanguages.normalize(sub.languageCode))
                 .setLabel(sub.label)
                 .setId(sub.id)
                 .build()
@@ -618,7 +627,8 @@ class PlayerViewModel @Inject constructor(
             }
         }
 
-        _uiState.update { it.copy(audioTracks = audioList, subtitleTracks = subList) }
+        val sortedSubs = subList.sortedBy { SubtitleLanguages.rank(it.language, preferredSubtitleLanguage) }
+        _uiState.update { it.copy(audioTracks = audioList, subtitleTracks = sortedSubs) }
     }
 
     private fun startProgressLoop() {

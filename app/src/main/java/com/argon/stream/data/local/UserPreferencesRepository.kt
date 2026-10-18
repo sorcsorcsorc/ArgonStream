@@ -53,7 +53,7 @@ class UserPreferencesRepository @Inject constructor(
             dynamicColors = prefs[Keys.DYNAMIC_COLORS] ?: false,
             defaultPlayer = resolvedPlayer,
             preferredAudioLanguage = prefs[Keys.AUDIO_LANG] ?: "en",
-            preferredSubtitleLanguage = prefs[Keys.SUBTITLE_LANG] ?: "en",
+            preferredSubtitleLanguage = prefs[Keys.SUBTITLE_LANG] ?: "sq",
             subtitlesDisabledByDefault = prefs[Keys.SUBS_DISABLED] ?: false,
             autoPlayNextEpisode = prefs[Keys.AUTO_NEXT_EPISODE] ?: true,
             preferredMaxResolution = prefs[Keys.MAX_RESOLUTION] ?: "2160p",

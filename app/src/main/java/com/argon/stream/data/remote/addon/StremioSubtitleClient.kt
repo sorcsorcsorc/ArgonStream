@@ -2,6 +2,7 @@ package com.argon.stream.data.remote.addon
 
 import android.net.Uri
 import com.argon.stream.core.network.NetworkResult
+import com.argon.stream.core.player.SubtitleLanguages
 import com.argon.stream.core.network.safeApiCall
 import com.argon.stream.data.local.AddonDao
 import com.argon.stream.domain.model.ExternalSubtitleTrack
@@ -57,6 +58,7 @@ class StremioSubtitleClient @Inject constructor(
         }
 
         deferred.awaitAll().flatten()
+            .sortedBy { SubtitleLanguages.rank(it.languageCode, preferred = null) }
     }
 
     private suspend fun fetchFromAddon(
@@ -88,13 +90,13 @@ class StremioSubtitleClient @Inject constructor(
 
         return res.data.subtitles.mapIndexedNotNull { idx, dto ->
             val subUrl = dto.url?.takeIf { it.startsWith("http") } ?: return@mapIndexedNotNull null
-            val lang = (dto.lang ?: "und").lowercase(Locale.US)
+            val lang = SubtitleLanguages.normalize(dto.lang)
             val mimeType = detectSubtitleMimeType(subUrl)
             ExternalSubtitleTrack(
                 id = dto.id ?: "${addonName}_${lang}_$idx",
                 url = subUrl,
                 languageCode = lang,
-                label = "${lang.uppercase(Locale.US)} • $addonName",
+                label = "${SubtitleLanguages.displayName(lang)} • $addonName",
                 addonName = addonName,
                 mimeType = mimeType
             )

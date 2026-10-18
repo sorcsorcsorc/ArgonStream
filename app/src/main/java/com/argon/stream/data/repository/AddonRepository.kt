@@ -1,6 +1,8 @@
 package com.argon.stream.data.repository
 
+import android.content.Context
 import com.argon.stream.core.network.NetworkResult
+import dagger.hilt.android.qualifiers.ApplicationContext
 import com.argon.stream.core.security.SecretVault
 import com.argon.stream.data.local.AddonDao
 import com.argon.stream.data.local.AddonEntity
@@ -30,12 +32,15 @@ private data class ArgonBackupPayload(
 
 @Singleton
 class AddonRepository @Inject constructor(
+    @ApplicationContext context: Context,
     private val addonDao: AddonDao,
     private val addonClient: StremioAddonClient,
     private val aioParser: AioStreamsConfigParser,
     private val secretVault: SecretVault,
     private val json: Json
 ) {
+    private val seedPrefs = context.getSharedPreferences("argon_addon_seeding", Context.MODE_PRIVATE)
+
     fun observeAddons(): Flow<List<InstalledAddon>> {
         return addonDao.observeAddons().map { entities ->
             entities.map { it.toDomain() }
@@ -43,12 +48,14 @@ class AddonRepository @Inject constructor(
     }
 
     suspend fun ensureDefaultAddonsSeeded() {
+        seedOpenSubtitlesOnce()
         val current = addonDao.observeAddons().first()
-        if (current.isNotEmpty()) return
+        if (current.any { it.id == CINEMETA_ID }) return
+        if (current.any { it.resourcesCsv.contains("catalog") }) return
 
         // Seeds Cinemeta (official Stremio catalog/metadata add-on). Stream add-ons are installed by the user.
         val cinemeta = AddonEntity(
-            id = "com.linvo.cinemeta",
+            id = CINEMETA_ID,
             name = "Cinemeta (Official Catalog)",
             version = "3.0.12",
             description = "Official Stremio metadata addon for IMDb movies and series.",
@@ -63,6 +70,35 @@ class AddonRepository @Inject constructor(
             updatedAtMs = System.currentTimeMillis()
         )
         addonDao.upsertAddon(cinemeta)
+    }
+
+    /**
+     * Adds Stremio's official OpenSubtitles add-on one time (it supplies Albanian and English subtitles).
+     * If the user removes it later it is not re-added.
+     */
+    private suspend fun seedOpenSubtitlesOnce() {
+        if (seedPrefs.getBoolean(KEY_OPENSUBTITLES_SEEDED, false)) return
+        val current = addonDao.observeAddons().first()
+        if (current.none { it.id == OPENSUBTITLES_ID }) {
+            addonDao.upsertAddon(
+                AddonEntity(
+                    id = OPENSUBTITLES_ID,
+                    name = "OpenSubtitles v3",
+                    version = "1.0.0",
+                    description = "Subtitles from OpenSubtitles (Albanian and English are picked first).",
+                    manifestUrl = "https://opensubtitles-v3.strem.io/manifest.json",
+                    baseUrl = "https://opensubtitles-v3.strem.io",
+                    resourcesCsv = "subtitles",
+                    typesCsv = "movie,series",
+                    idPrefixesCsv = "tt",
+                    isEnabled = true,
+                    priorityOrder = current.size,
+                    lastHealthStatus = "VERIFIED",
+                    updatedAtMs = System.currentTimeMillis()
+                )
+            )
+        }
+        seedPrefs.edit().putBoolean(KEY_OPENSUBTITLES_SEEDED, true).apply()
     }
 
     suspend fun installAddonFromUrl(rawUrl: String): NetworkResult<InstalledAddon> {
@@ -252,4 +288,10 @@ class AddonRepository @Inject constructor(
         lastHealthStatus = lastHealthStatus,
         updatedAtMs = System.currentTimeMillis()
     )
+
+    private companion object {
+        const val CINEMETA_ID = "com.linvo.cinemeta"
+        const val OPENSUBTITLES_ID = "org.stremio.opensubtitlesv3"
+        const val KEY_OPENSUBTITLES_SEEDED = "opensubtitles_seeded"
+    }
 }

@@ -62,7 +62,7 @@ import com.argon.stream.ui.components.SectionCard
 import com.argon.stream.ui.components.StatusMessageCard
 
 private val LANGUAGE_OPTIONS = listOf(
-    "en" to "English", "es" to "Spanish", "fr" to "French", "de" to "German", "it" to "Italian",
+    "sq" to "Albanian", "en" to "English", "es" to "Spanish", "fr" to "French", "de" to "German", "it" to "Italian",
     "pt" to "Portuguese", "nl" to "Dutch", "pl" to "Polish", "ru" to "Russian", "tr" to "Turkish",
     "ar" to "Arabic", "hi" to "Hindi", "ja" to "Japanese", "ko" to "Korean", "zh" to "Chinese"
 )

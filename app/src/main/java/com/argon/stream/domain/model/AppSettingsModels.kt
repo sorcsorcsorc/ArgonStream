@@ -8,7 +8,7 @@ data class ArgonPreferences(
     val dynamicColors: Boolean = false,
     val defaultPlayer: ExternalPlayerTarget = ExternalPlayerTarget.INTERNAL_EXOPLAYER,
     val preferredAudioLanguage: String = "en",
-    val preferredSubtitleLanguage: String = "en",
+    val preferredSubtitleLanguage: String = "sq", // Albanian first, English is always the next fallback
     val subtitlesDisabledByDefault: Boolean = false,
     val autoPlayNextEpisode: Boolean = true,
     val preferredMaxResolution: String = "2160p", // "2160p", "1080p", "720p"
