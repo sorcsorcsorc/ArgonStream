@@ -289,7 +289,7 @@ class ScreenLayoutScreenshotTest {
     fun bottomBarSmallPhone() = capture("11_bottom_bar_small_phone") {
         Box(modifier = Modifier.fillMaxSize()) {
             Box(modifier = Modifier.align(Alignment.BottomCenter)) {
-                ArgonBottomBar(isSelected = { it == TopLevelDestination.DOWNLOADS }, onNavigate = {})
+                ArgonBottomBar(isSelected = { it == TopLevelDestination.LIBRARY }, onNavigate = {})
             }
         }
     }

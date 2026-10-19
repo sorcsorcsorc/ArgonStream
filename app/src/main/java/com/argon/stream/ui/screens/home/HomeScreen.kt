@@ -85,6 +85,7 @@ fun HomeScreen(
     onOpenSearch: () -> Unit,
     onOpenCatalog: (query: CatalogQuery, title: String) -> Unit = { _, _ -> },
     onOpenLibrary: () -> Unit = {},
+    onResume: (WatchProgressItem) -> Unit = { onOpenMediaDetails(it.mediaItem) },
     viewModel: HomeViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -101,7 +102,8 @@ fun HomeScreen(
         onSwitchProfile = viewModel::switchProfile,
         onOpenCatalog = onOpenCatalog,
         onOpenLibrary = onOpenLibrary,
-        onRemoveContinueWatching = viewModel::removeFromContinueWatching
+        onRemoveContinueWatching = viewModel::removeFromContinueWatching,
+        onResume = onResume
     )
 }
 
@@ -111,12 +113,13 @@ internal fun HomeContent(
     onOpenMediaDetails: (MediaItem) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenSearch: () -> Unit,
-    onSetFilter: (MediaType?) -> Unit,
+    onSetFilter: (HomeFilter) -> Unit,
     onRetry: () -> Unit,
     onSwitchProfile: () -> Unit = {},
     onOpenCatalog: (query: CatalogQuery, title: String) -> Unit = { _, _ -> },
     onOpenLibrary: () -> Unit = {},
-    onRemoveContinueWatching: (WatchProgressItem) -> Unit = {}
+    onRemoveContinueWatching: (WatchProgressItem) -> Unit = {},
+    onResume: (WatchProgressItem) -> Unit = { onOpenMediaDetails(it.mediaItem) }
 ) {
     val cardWidth = rememberPosterCardWidth()
     var tipDismissed by rememberSaveable { mutableStateOf(false) }
@@ -164,12 +167,11 @@ internal fun HomeContent(
                 contentPadding = PaddingValues(horizontal = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                val filters = listOf(null to "All", MediaType.MOVIE to "Movies", MediaType.SERIES to "Series")
-                items(filters, key = { it.second }) { (type, label) ->
+                items(HomeFilter.entries, key = { it.name }) { filter ->
                     FilterChip(
-                        selected = state.filterType == type,
-                        onClick = { onSetFilter(type) },
-                        label = { Text(label, style = MaterialTheme.typography.labelLarge) },
+                        selected = state.filter == filter,
+                        onClick = { onSetFilter(filter) },
+                        label = { Text(filter.label, style = MaterialTheme.typography.labelLarge) },
                         shape = RoundedCornerShape(50),
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = MaterialTheme.colorScheme.primary,
@@ -177,7 +179,7 @@ internal fun HomeContent(
                         ),
                         border = FilterChipDefaults.filterChipBorder(
                             enabled = true,
-                            selected = state.filterType == type,
+                            selected = state.filter == filter,
                             borderColor = MaterialTheme.colorScheme.outlineVariant,
                             selectedBorderColor = Color.Transparent
                         )
@@ -249,7 +251,7 @@ internal fun HomeContent(
                                     item = progressItem.mediaItem,
                                     progressFraction = progressItem.progressFraction,
                                     episodeBadge = badge,
-                                    onClick = onOpenMediaDetails,
+                                    onClick = { onResume(progressItem) },
                                     onLongClick = { pendingRemoval = progressItem },
                                     modifier = Modifier.width(cardWidth)
                                 )
@@ -278,7 +280,7 @@ internal fun HomeContent(
                             onSeeAll = row.query?.let { query -> { onOpenCatalog(query, row.title) } }
                         )
                     }
-                    if (index == 0) {
+                    if (index == 0 && state.filter != HomeFilter.ANIME) {
                         item(key = "genres") {
                             GenreSection(
                                 type = state.filterType ?: MediaType.MOVIE,

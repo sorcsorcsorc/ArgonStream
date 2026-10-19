@@ -40,7 +40,8 @@ class CatalogGridViewModel @Inject constructor(
     private val initialQuery = CatalogQuery(
         kind = runCatching { CatalogKind.valueOf(savedStateHandle["kind"] ?: "") }.getOrDefault(CatalogKind.POPULAR),
         type = savedStateHandle.get<String>("type")?.let { runCatching { MediaType.valueOf(it) }.getOrNull() },
-        genre = savedStateHandle.get<String>("genre")?.takeIf { it.isNotBlank() }
+        genre = savedStateHandle.get<String>("genre")?.takeIf { it.isNotBlank() },
+        animeCatalog = savedStateHandle.get<String>("anime")?.takeIf { it.isNotBlank() }
     )
 
     private val _uiState = MutableStateFlow(

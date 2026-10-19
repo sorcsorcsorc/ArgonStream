@@ -14,6 +14,10 @@ import com.argon.stream.data.remote.tmdb.TmdbApiService
 import com.argon.stream.data.remote.tmdb.TmdbDetailsDto
 import com.argon.stream.data.remote.tmdb.TmdbMediaDto
 import com.argon.stream.data.remote.wikipedia.WikidataCastClient
+import com.argon.stream.data.remote.kitsu.KitsuAnimeClient
+import com.argon.stream.data.remote.imdb.ImdbSuggestClient
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import com.argon.stream.data.remote.wikipedia.WikipediaPhotoClient
 import com.argon.stream.domain.model.CastMember
 import com.argon.stream.domain.model.CatalogGenres
@@ -53,6 +57,8 @@ class CatalogRepository @Inject constructor(
     private val cinemeta: CinemetaClient,
     private val wikipediaPhotos: WikipediaPhotoClient,
     private val wikidataCast: WikidataCastClient,
+    private val kitsu: KitsuAnimeClient,
+    private val imdbSuggest: ImdbSuggestClient,
     private val watchHistoryDao: WatchHistoryDao,
     private val watchlistDao: WatchlistDao,
     private val watchedDao: WatchedDao,
@@ -226,6 +232,7 @@ class CatalogRepository @Inject constructor(
             (res as? NetworkResult.Success)?.data
                 ?.mapNotNull { it.toDomain() }
                 ?.distinctBy { it.id }
+                ?.let { withMissingRatings(it) }
                 ?.takeIf { it.isNotEmpty() }
                 ?.let {
                     val kind = if (spec.catalogId == "top") CatalogKind.POPULAR else CatalogKind.TOP_RATED
@@ -244,11 +251,59 @@ class CatalogRepository @Inject constructor(
         }
     }
 
+    /** Home rows for the Anime filter (Kitsu catalogs, IMDb-linked titles only). */
+    suspend fun loadAnimeRows(): NetworkResult<List<CatalogRow>> = coroutineScope {
+        val results = KitsuAnimeClient.HOME_ROWS.map { (catalogId, title) ->
+            async { Triple(catalogId, title, kitsu.fetchCatalog(catalogId)) }
+        }.map { it.await() }
+        val rows = results.mapNotNull { (catalogId, title, res) ->
+            (res as? NetworkResult.Success)?.data?.takeIf { it.isNotEmpty() }?.let { items ->
+                CatalogRow(
+                    "anime_$catalogId", title, null, items,
+                    // Kitsu's trending list has no paging; its "See all" opens the popular list instead.
+                    CatalogQuery(CatalogKind.POPULAR, null, animeCatalog = catalogId.takeUnless { it.endsWith("trending") } ?: "kitsu-anime-popular")
+                )
+            }
+        }
+        if (rows.isEmpty()) {
+            results.firstNotNullOfOrNull { it.third as? NetworkResult.Error }
+                ?: NetworkResult.Error(userMessage = "Anime catalogs aren't available right now.", diagnosticReason = "EMPTY_ANIME")
+        } else {
+            NetworkResult.Success(rows)
+        }
+    }
+
+    /**
+     * Cinemeta's catalogs have no rating for some recent titles; fetch those from its live endpoint
+     * (a handful of small, cached requests, run a few at a time).
+     */
+    private suspend fun withMissingRatings(items: List<MediaItem>, limit: Int = 24): List<MediaItem> = coroutineScope {
+        val missing = items.filter { it.rating == null && it.id.startsWith("tt") }.take(limit)
+        if (missing.isEmpty()) return@coroutineScope items
+        val gate = Semaphore(6)
+        val found = missing.map { item ->
+            async {
+                gate.withPermit {
+                    item.id to cinemeta.fetchLiveMeta(item.type.toStremioType(), item.id)?.imdbRating?.toDoubleOrNull()
+                }
+            }
+        }.map { it.await() }.toMap()
+        items.map { item -> found[item.id]?.let { item.copy(rating = it) } ?: item }
+    }
+
     /**
      * One page of a full catalog for the "See all" / genre grids.
      * [cursor] starts at 0; pass back [CatalogPage.nextCursor] to continue.
      */
     suspend fun loadCatalogPage(query: CatalogQuery, cursor: Int): NetworkResult<CatalogPage> {
+        query.animeCatalog?.let { catalogId ->
+            return when (val res = kitsu.fetchCatalog(catalogId, skip = cursor)) {
+                is NetworkResult.Success -> NetworkResult.Success(
+                    CatalogPage(items = res.data, nextCursor = if (res.data.isEmpty()) null else cursor + KITSU_PAGE_SIZE)
+                )
+                is NetworkResult.Error -> res
+            }
+        }
         val apiKey = getTmdbApiKeyOrNull()
         val type = query.type ?: MediaType.MOVIE
 
@@ -281,7 +336,7 @@ class CatalogRepository @Inject constructor(
         return when (val res = cinemeta.fetchCatalog(type.toStremioType(), catalogId, genre = genre, skip = cursor)) {
             is NetworkResult.Success -> NetworkResult.Success(
                 CatalogPage(
-                    items = res.data.mapNotNull { it.toDomain(type) },
+                    items = withMissingRatings(res.data.mapNotNull { it.toDomain(type) }),
                     nextCursor = if (res.data.isEmpty()) null else cursor + res.data.size
                 )
             )
@@ -292,6 +347,18 @@ class CatalogRepository @Inject constructor(
     /** Drops a title from Continue Watching (the player stores one entry per movie / series). */
     suspend fun removeFromContinueWatching(item: MediaItem) {
         watchHistoryDao.removeWatchProgress(profileId, "${item.type.name.lowercase()}:${item.id}")
+    }
+
+    /**
+     * Instant search via IMDb's type-ahead (~0.5s, up to ~8 best matches). The search screen shows these
+     * first, then merges the fuller [searchCatalog] results, which can take several seconds on Cinemeta.
+     */
+    suspend fun quickSearch(query: String, filterType: MediaType?): List<MediaItem> {
+        val trimmed = query.trim()
+        if (trimmed.length < 2) return emptyList()
+        val items = (imdbSuggest.search(trimmed) as? NetworkResult.Success)?.data.orEmpty()
+            .filter { filterType == null || it.type == filterType }
+        return withMissingRatings(items, limit = 12)
     }
 
     suspend fun searchCatalog(
@@ -404,11 +471,14 @@ class CatalogRepository @Inject constructor(
                         )
                     }
                 val tmdbExtras = loadTmdbExtrasFor(mediaType, meta.tmdbId)
+                val liveRating = if (item.rating == null) {
+                    cinemeta.fetchLiveMeta(mediaType.toStremioType(), imdbId)?.imdbRating?.toDoubleOrNull()
+                } else null
                 val cast = tmdbExtras?.cast?.takeIf { it.isNotEmpty() }
                     ?: keylessCast(mediaType, imdbId, meta.cast.orEmpty())
                 NetworkResult.Success(
                     MediaDetails(
-                        item = item,
+                        item = if (liveRating != null) item.copy(rating = liveRating) else item,
                         runtimeMinutes = meta.runtime?.filter { it.isDigit() }?.toIntOrNull(),
                         status = meta.status,
                         tagline = tmdbExtras?.tagline,
@@ -623,6 +693,7 @@ class CatalogRepository @Inject constructor(
 
     companion object {
         private const val MAX_CAST = 40
+        private const val KITSU_PAGE_SIZE = 20
         private val GENRE_MAP = mapOf(
             28 to "Action", 12 to "Adventure", 16 to "Animation", 35 to "Comedy",
             80 to "Crime", 99 to "Documentary", 18 to "Drama", 10751 to "Family",

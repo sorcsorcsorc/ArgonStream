@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 enum class SortOrder(val label: String) {
@@ -36,7 +37,9 @@ data class SearchUiState(
     val isLoading: Boolean = false,
     val results: List<MediaItem> = emptyList(),
     val errorMessage: String? = null,
-    val recentSearches: List<String> = emptyList()
+    val recentSearches: List<String> = emptyList(),
+    /** Popular titles shown before anything is typed. */
+    val suggestions: List<MediaItem> = emptyList()
 )
 
 @OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
@@ -50,9 +53,21 @@ class SearchViewModel @Inject constructor(
     private val typeFilterFlow = MutableStateFlow<MediaType?>(null)
     private val minRatingFlow = MutableStateFlow(0.0)
     private val sortOrderFlow = MutableStateFlow(SortOrder.RELEVANCE)
+    private val suggestionsFlow = MutableStateFlow<List<MediaItem>>(emptyList())
+
+    init {
+        viewModelScope.launch {
+            // Interleave popular movies and series so both show near the top.
+            val rows = (catalogRepository.loadHomeCatalogs(null) as? NetworkResult.Success)?.data.orEmpty()
+            val movies = rows.firstOrNull { r -> r.items.firstOrNull()?.type == MediaType.MOVIE }?.items.orEmpty()
+            val series = rows.firstOrNull { r -> r.items.firstOrNull()?.type == MediaType.SERIES }?.items.orEmpty()
+            val mixed = (0 until maxOf(movies.size, series.size)).flatMap { i -> listOfNotNull(movies.getOrNull(i), series.getOrNull(i)) }
+            suggestionsFlow.value = mixed.ifEmpty { rows.flatMap { it.items } }.distinctBy { "${it.type}_${it.id}" }.take(40)
+        }
+    }
 
     private val searchResultsFlow = combine(
-        queryFlow.debounce(350).map { it.trim() }.distinctUntilChanged(),
+        queryFlow.debounce(250).map { it.trim() }.distinctUntilChanged(),
         typeFilterFlow
     ) { q, type ->
         q to type
@@ -63,9 +78,12 @@ class SearchViewModel @Inject constructor(
                 return@flow
             }
             emit(Triple(true, emptyList<MediaItem>(), null as String?))
+            // Fast IMDb matches first, then the full list merged in behind them.
+            val quick = catalogRepository.quickSearch(q, type)
+            if (quick.isNotEmpty()) emit(Triple(true, quick, null))
             when (val res = catalogRepository.searchCatalog(q, type)) {
-                is NetworkResult.Success -> emit(Triple(false, res.data, null))
-                is NetworkResult.Error -> emit(Triple(false, emptyList(), res.userMessage))
+                is NetworkResult.Success -> emit(Triple(false, (quick + res.data).distinctBy { "${it.type}_${it.id}" }, null))
+                is NetworkResult.Error -> emit(Triple(false, quick, res.userMessage.takeIf { quick.isEmpty() }))
             }
         }
     }
@@ -94,6 +112,8 @@ class SearchViewModel @Inject constructor(
         )
     }.combine(recentSearches.observe()) { state, recents ->
         state.copy(recentSearches = recents)
+    }.combine(suggestionsFlow) { state, suggestions ->
+        state.copy(suggestions = suggestions.filter { state.selectedType == null || it.type == state.selectedType })
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),

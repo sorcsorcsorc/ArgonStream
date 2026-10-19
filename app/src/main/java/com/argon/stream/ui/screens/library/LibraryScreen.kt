@@ -14,7 +14,7 @@ import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.PrimaryScrollableTabRow
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -24,6 +24,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.argon.stream.ui.screens.downloads.DownloadsScreen
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -37,10 +38,15 @@ import com.argon.stream.ui.screens.home.rememberPosterCardWidth
 @Composable
 fun LibraryScreen(
     onOpenMediaDetails: (MediaItem) -> Unit,
+    onPlayFile: (android.net.Uri, String) -> Unit = { _, _ -> },
     viewModel: LibraryViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    LibraryContent(state = state, onOpenMediaDetails = onOpenMediaDetails)
+    LibraryContent(
+        state = state,
+        onOpenMediaDetails = onOpenMediaDetails,
+        downloads = { DownloadsScreen(onPlayFile = onPlayFile, showHeader = false) }
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -48,7 +54,8 @@ fun LibraryScreen(
 internal fun LibraryContent(
     state: LibraryUiState,
     onOpenMediaDetails: (MediaItem) -> Unit,
-    initialTab: Int = 0
+    initialTab: Int = 0,
+    downloads: @Composable () -> Unit = {}
 ) {
     var selectedTab by rememberSaveable { mutableIntStateOf(initialTab) }
     val cardWidth = rememberPosterCardWidth()
@@ -56,8 +63,8 @@ internal fun LibraryContent(
     Column(modifier = Modifier.fillMaxSize()) {
         ScreenHeader(title = "Library")
 
-        PrimaryTabRow(selectedTabIndex = selectedTab) {
-            listOf("Watchlist", "Favorites", "History").forEachIndexed { index, title ->
+        PrimaryScrollableTabRow(selectedTabIndex = selectedTab, edgePadding = 16.dp) {
+            listOf("Watchlist", "Favorites", "History", "Downloads").forEachIndexed { index, title ->
                 Tab(
                     selected = selectedTab == index,
                     onClick = { selectedTab = index },
@@ -86,6 +93,7 @@ internal fun LibraryContent(
                     emptyTitle = "No favorites yet",
                     emptyMessage = "Tap the heart on any title to add it to your favorites."
                 )
+                3 -> downloads()
                 else -> LibraryGrid(
                     items = state.history.map { progress ->
                         val badge = if (progress.seasonNumber != null && progress.episodeNumber != null) {

@@ -47,6 +47,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -77,17 +78,19 @@ interface AddonManagerActions {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AddonManagerScreen(
+    onBack: (() -> Unit)? = null,
     viewModel: AddonManagerViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    AddonManagerContent(state = state, actions = viewModel)
+    AddonManagerContent(state = state, actions = viewModel, onBack = onBack)
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun AddonManagerContent(
     state: AddonManagerUiState,
-    actions: AddonManagerActions
+    actions: AddonManagerActions,
+    onBack: (() -> Unit)? = null
 ) {
     var addonPendingRemoval by remember { mutableStateOf<InstalledAddon?>(null) }
 
@@ -126,7 +129,14 @@ internal fun AddonManagerContent(
             ScreenHeader(
                 title = "Add-ons",
                 subtitle = "Stremio-compatible add-ons provide streams and subtitles",
-                startPadding = 0.dp
+                startPadding = 0.dp,
+                navigation = onBack?.let { back ->
+                    {
+                        IconButton(onClick = back) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        }
+                    }
+                }
             )
         }
 

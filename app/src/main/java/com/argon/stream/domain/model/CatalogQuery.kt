@@ -11,7 +11,9 @@ data class CatalogQuery(
     val kind: CatalogKind,
     /** null = movies and series mixed (only meaningful for TRENDING with TMDB). */
     val type: MediaType?,
-    val genre: String? = null
+    val genre: String? = null,
+    /** Kitsu catalog id when this is an anime list. */
+    val animeCatalog: String? = null
 )
 
 /** One page of a catalog; [nextCursor] is null when there is nothing more to load. */

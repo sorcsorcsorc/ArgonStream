@@ -53,6 +53,7 @@ import java.util.Locale
 @Composable
 fun DownloadsScreen(
     onPlayFile: (uri: Uri, title: String) -> Unit,
+    showHeader: Boolean = true,
     viewModel: DownloadsViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -73,7 +74,8 @@ fun DownloadsScreen(
             val uri = viewModel.playableUri(item)
             if (uri != null) onPlayFile(uri, item.title.substringBeforeLast('.')) else missingFile = true
         },
-        onRemove = viewModel::remove
+        onRemove = viewModel::remove,
+        showHeader = showHeader
     )
 }
 
@@ -81,7 +83,8 @@ fun DownloadsScreen(
 internal fun DownloadsContent(
     state: DownloadsUiState,
     onPlay: (DownloadItem) -> Unit,
-    onRemove: (DownloadItem) -> Unit
+    onRemove: (DownloadItem) -> Unit,
+    showHeader: Boolean = true
 ) {
     var pendingRemoval by remember { mutableStateOf<DownloadItem?>(null) }
 
@@ -104,10 +107,12 @@ internal fun DownloadsContent(
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        ScreenHeader(
-            title = "Downloads",
-            subtitle = "Saved to Downloads/Argon on your phone"
-        )
+        if (showHeader) {
+            ScreenHeader(
+                title = "Downloads",
+                subtitle = "Saved to Downloads/Argon on your phone"
+            )
+        }
 
         when {
             state.isLoading -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -117,7 +122,7 @@ internal fun DownloadsContent(
                 EmptyState(
                     icon = Icons.Default.Download,
                     title = "No downloads yet",
-                    message = "Tap the download icon next to a stream to save it here and watch it offline."
+                    message = "Tap Download on a movie or episode to save it here and watch it offline."
                 )
             }
             else -> LazyColumn(

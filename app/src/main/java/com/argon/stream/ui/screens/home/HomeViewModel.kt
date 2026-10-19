@@ -20,9 +20,14 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+/** Home's top filter chips. Anime is its own catalog (Kitsu), not a media type. */
+enum class HomeFilter(val label: String, val mediaType: MediaType?) {
+    ALL("All", null), MOVIES("Movies", MediaType.MOVIE), SERIES("Series", MediaType.SERIES), ANIME("Anime", null)
+}
+
 data class HomeUiState(
     val isLoading: Boolean = true,
-    val filterType: MediaType? = null,
+    val filter: HomeFilter = HomeFilter.ALL,
     val featuredItem: MediaItem? = null,
     val continueWatching: List<WatchProgressItem> = emptyList(),
     val myList: List<MediaItem> = emptyList(),
@@ -30,7 +35,9 @@ data class HomeUiState(
     val isTmdbConfigured: Boolean = false,
     val activeProfile: Profile? = null,
     val errorMessage: String? = null
-)
+) {
+    val filterType: MediaType? get() = filter.mediaType
+}
 
 @HiltViewModel
 class HomeViewModel @Inject constructor(
@@ -43,6 +50,9 @@ class HomeViewModel @Inject constructor(
 
     private var loadJob: Job? = null
     private var loadedWithTmdb: Boolean? = null
+    /** Rows per filter, so switching All / Movies / Series / Anime is instant after the first load. */
+    private val rowsCache = mutableMapOf<HomeFilter, List<CatalogRow>>()
+    private var prefetched = false
 
     init {
         viewModelScope.launch {
@@ -76,33 +86,57 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    fun setFilter(type: MediaType?) {
-        if (_uiState.value.filterType == type) return
-        _uiState.update { it.copy(filterType = type) }
-        refreshCatalogs()
+    fun setFilter(filter: HomeFilter) {
+        if (_uiState.value.filter == filter) return
+        loadJob?.cancel()
+        val cached = rowsCache[filter]
+        _uiState.update {
+            it.copy(
+                filter = filter,
+                catalogRows = cached ?: emptyList(),
+                featuredItem = cached?.let(::pickFeatured) ?: it.featuredItem,
+                isLoading = cached == null,
+                errorMessage = null
+            )
+        }
+        if (cached == null) refreshCatalogs()
     }
 
     fun refreshCatalogs() {
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
-            val filter = _uiState.value.filterType
+            val filter = _uiState.value.filter
             val hasTmdb = catalogRepository.hasTmdbCredentials()
+            if (loadedWithTmdb != null && loadedWithTmdb != hasTmdb) rowsCache.clear()
             _uiState.update { it.copy(isLoading = true, errorMessage = null, isTmdbConfigured = hasTmdb) }
-            when (val result = catalogRepository.loadHomeCatalogs(filter)) {
+            when (val result = load(filter)) {
                 is NetworkResult.Success -> {
                     loadedWithTmdb = hasTmdb
                     val rows = result.data
+                    rowsCache[filter] = rows
                     _uiState.update {
-                        it.copy(
-                            isLoading = false,
-                            catalogRows = rows,
-                            featuredItem = pickFeatured(rows)
-                        )
+                        if (it.filter != filter) it
+                        else it.copy(isLoading = false, catalogRows = rows, featuredItem = pickFeatured(rows))
                     }
+                    prefetchOtherFilters()
                 }
                 is NetworkResult.Error -> _uiState.update {
                     it.copy(isLoading = false, errorMessage = result.userMessage)
                 }
+            }
+        }
+    }
+
+    private suspend fun load(filter: HomeFilter) =
+        if (filter == HomeFilter.ANIME) catalogRepository.loadAnimeRows() else catalogRepository.loadHomeCatalogs(filter.mediaType)
+
+    /** Loads the other filters quietly in the background once the first one is shown. */
+    private fun prefetchOtherFilters() {
+        if (prefetched) return
+        prefetched = true
+        viewModelScope.launch {
+            HomeFilter.entries.filter { it !in rowsCache }.forEach { filter ->
+                (load(filter) as? NetworkResult.Success)?.data?.let { rowsCache[filter] = it }
             }
         }
     }

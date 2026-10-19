@@ -153,7 +153,8 @@ class PlayerViewModel @Inject constructor(
     private val addonRepository: AddonRepository,
     private val torBoxRepository: TorBoxRepository,
     private val streamChoiceDao: StreamChoiceDao,
-    private val skipSegmentsClient: SkipSegmentsClient
+    private val skipSegmentsClient: SkipSegmentsClient,
+    private val lastStreamStore: com.argon.stream.ui.screens.streams.LastStreamStore
 ) : ViewModel() {
 
     private var request: PlaybackRequest = run {
@@ -475,6 +476,8 @@ class PlayerViewModel @Inject constructor(
                 episodeNumber = next.episodeNumber
             )
             playbackSessionStore.put(nextRequest)
+            // Continue Watching can reopen exactly this stream later.
+            lastStreamStore.put(profileRepository.currentProfileId(), nextVideoId, picked.uniqueKey)
             request = nextRequest
             httpFactory.setDefaultRequestProperties(nextRequest.requestHeaders)
             finishedHandled = false

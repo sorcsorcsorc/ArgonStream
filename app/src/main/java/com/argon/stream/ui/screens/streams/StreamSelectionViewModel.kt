@@ -49,6 +49,9 @@ data class MultiFilePromptState(
     val forDownload: Boolean = false
 )
 
+/** Why the stream list was opened: pick-and-play, resume the last source automatically, or download. */
+enum class StreamScreenMode { PLAY, RESUME, DOWNLOAD }
+
 enum class StreamSort(val label: String) { BEST("Best"), SIZE("Largest"), SEEDERS("Most seeders") }
 
 data class StreamSelectionUiState(
@@ -70,7 +73,10 @@ data class StreamSelectionUiState(
     /** uniqueKey of the stream matching the source picked last time for this title. */
     val lastUsedKey: String? = null,
     val sort: StreamSort = StreamSort.BEST,
-    val toastId: Int = 0
+    val toastId: Int = 0,
+    val mode: StreamScreenMode = StreamScreenMode.PLAY,
+    /** True while Continue Watching is reopening the last-used source by itself. */
+    val isAutoResuming: Boolean = false
 )
 
 @HiltViewModel
@@ -85,8 +91,14 @@ class StreamSelectionViewModel @Inject constructor(
     private val streamDownloader: StreamDownloader,
     private val profileRepository: ProfileRepository,
     private val streamChoiceDao: StreamChoiceDao,
-    private val deviceCodecSupport: DeviceCodecSupport
+    private val deviceCodecSupport: DeviceCodecSupport,
+    private val lastStreamStore: LastStreamStore
 ) : ViewModel() {
+
+    private val mode: StreamScreenMode = runCatching {
+        StreamScreenMode.valueOf((savedStateHandle.get<String>("mode") ?: "").uppercase(Locale.US))
+    }.getOrDefault(StreamScreenMode.PLAY)
+    private var autoResumeTried = false
 
     val stremioVideoId: String = savedStateHandle["videoId"] ?: ""
     private val displayTitle: String = savedStateHandle["title"] ?: ""
@@ -100,7 +112,12 @@ class StreamSelectionViewModel @Inject constructor(
     private val episodeNumber: Int? = idParts.getOrNull(2)?.toIntOrNull()
 
     private val _uiState = MutableStateFlow(
-        StreamSelectionUiState(stremioVideoId = stremioVideoId, title = displayTitle)
+        StreamSelectionUiState(
+            stremioVideoId = stremioVideoId,
+            title = displayTitle,
+            mode = mode,
+            isAutoResuming = mode == StreamScreenMode.RESUME
+        )
     )
     val uiState: StateFlow<StreamSelectionUiState> = _uiState.asStateFlow()
 
@@ -150,10 +167,13 @@ class StreamSelectionViewModel @Inject constructor(
             )
 
             val choice = mediaId.takeIf { it.isNotBlank() }?.let { streamChoiceDao.get(profileRepository.currentProfileId(), it) }
-            val lastUsed = choice?.let { c ->
-                sorted.firstOrNull { c.bingeGroup != null && it.bingeGroup == c.bingeGroup }
-                    ?: sorted.firstOrNull { it.addonId == c.addonId && it.resolution == c.resolution }
-            }
+            // Exactly the stream played last for this video if it is still listed, else the same source/quality.
+            val exactKey = lastStreamStore.get(profileRepository.currentProfileId(), stremioVideoId)
+            val lastUsed = sorted.firstOrNull { exactKey != null && it.uniqueKey == exactKey }
+                ?: choice?.let { c ->
+                    sorted.firstOrNull { c.bingeGroup != null && it.bingeGroup == c.bingeGroup }
+                        ?: sorted.firstOrNull { it.addonId == c.addonId && it.resolution == c.resolution }
+                }
 
             val maxScore = StreamMetadataParser.resolutionScore(prefs.preferredMaxResolution)
                 .takeIf { it > 0 } ?: Int.MAX_VALUE
@@ -177,7 +197,22 @@ class StreamSelectionViewModel @Inject constructor(
                     providerWarnings = warnings
                 )
             }
+
+            // Continue Watching: play the remembered source straight away; fall back to the list.
+            if (mode == StreamScreenMode.RESUME && !autoResumeTried) {
+                autoResumeTried = true
+                if (lastUsed != null) {
+                    resolveCandidate(lastUsed, forDownload = false)
+                } else {
+                    _uiState.update { it.copy(isAutoResuming = false) }
+                }
+            }
         }
+    }
+
+    /** Stops the automatic resume and shows the full list. */
+    fun cancelAutoResume() {
+        _uiState.update { it.copy(isAutoResuming = false) }
     }
 
     private fun applyFilter(resolution: String?, sort: StreamSort): List<StreamCandidate> {
@@ -201,7 +236,8 @@ class StreamSelectionViewModel @Inject constructor(
         _uiState.update { it.copy(statusBanner = null, isStatusError = false) }
     }
 
-    fun onCandidateClicked(candidate: StreamCandidate) = resolveCandidate(candidate, forDownload = false)
+    fun onCandidateClicked(candidate: StreamCandidate) =
+        resolveCandidate(candidate, forDownload = mode == StreamScreenMode.DOWNLOAD)
 
     fun onDownloadClicked(candidate: StreamCandidate) = resolveCandidate(candidate, forDownload = true)
 
@@ -210,7 +246,8 @@ class StreamSelectionViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.update { it.copy(isResolving = true, statusBanner = null) }
             val outcome = torBoxRepository.resolveStreamCandidate(candidate, stremioVideoId)
-            _uiState.update { it.copy(isResolving = false) }
+            // A failed or pending automatic resume falls back to the list with the reason shown.
+            _uiState.update { it.copy(isResolving = false, isAutoResuming = it.isAutoResuming && outcome is TorBoxResolutionOutcome.ReadyToPlay) }
             if (!forDownload) lastResolvedCandidate = candidate
             when (outcome) {
                 is TorBoxResolutionOutcome.ReadyToPlay -> if (forDownload) {
@@ -311,6 +348,7 @@ class StreamSelectionViewModel @Inject constructor(
     /** Remembers the picked source so the next episode can auto-select the same one. */
     private suspend fun rememberStreamChoice() {
         val candidate = lastResolvedCandidate ?: return
+        lastStreamStore.put(profileRepository.currentProfileId(), stremioVideoId, candidate.uniqueKey)
         if (mediaId.isBlank()) return
         streamChoiceDao.upsert(
             StreamChoiceEntity(

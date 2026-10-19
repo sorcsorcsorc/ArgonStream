@@ -117,12 +117,22 @@ class CinemetaClient @Inject constructor(
         }
     }
 
+    private val liveCache = java.util.concurrent.ConcurrentHashMap<String, CinemetaMetaDto>()
+
+    /**
+     * Cinemeta's live meta: has the billed cast with photos and ratings for new titles that the v3
+     * catalog doesn't rate yet. Cached for the app session; null when unavailable.
+     */
+    suspend fun fetchLiveMeta(type: String, imdbId: String): CinemetaMetaDto? {
+        val key = "$type:$imdbId"
+        liveCache[key]?.let { return it }
+        val res = getJson<CinemetaMetaResponse>("$LIVE_URL/meta/$type/${Uri.encode(imdbId)}.json")
+        return (res as? NetworkResult.Success)?.data?.meta?.also { liveCache[key] = it }
+    }
+
     /** Billed cast with photos from Cinemeta's live endpoint (the v3 meta only lists ~3 names). */
     suspend fun fetchCredits(type: String, imdbId: String): List<CinemetaCreditDto> =
-        when (val res = getJson<CinemetaMetaResponse>("$LIVE_URL/meta/$type/${Uri.encode(imdbId)}.json")) {
-            is NetworkResult.Success -> res.data.meta?.creditsCast.orEmpty().filter { it.name.isNotBlank() }
-            is NetworkResult.Error -> emptyList()
-        }
+        fetchLiveMeta(type, imdbId)?.creditsCast.orEmpty().filter { it.name.isNotBlank() }
 
     private suspend inline fun <reified T> getJson(url: String): NetworkResult<T> = safeApiCall {
         withContext(Dispatchers.IO) {

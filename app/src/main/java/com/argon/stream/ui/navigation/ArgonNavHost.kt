@@ -166,14 +166,40 @@ fun ArgonNavHost(
                     val openDetails: (MediaItem) -> Unit = { item ->
                         navController.navigate("details/${item.type.name}/${Uri.encode(item.id)}")
                     }
+                    val openStreams: (type: String, mediaId: String, videoId: String, title: String, mode: String) -> Unit =
+                        { type, mediaId, videoId, title, mode ->
+                            navController.navigate(
+                                "streams/$type/${Uri.encode(mediaId)}/${Uri.encode(videoId)}/${Uri.encode(title)}?mode=$mode"
+                            )
+                        }
+                    val playFile: (Uri, String) -> Unit = { uri, title ->
+                        navController.navigate(
+                            "$PLAYER_ROUTE_PREFIX?videoId=&streamUrl=${Uri.encode(uri.toString())}&streamTitle=${Uri.encode(title)}"
+                        )
+                    }
 
                     composable(TopLevelDestination.HOME.route) {
                         HomeScreen(
                             onOpenMediaDetails = openDetails,
+                            onResume = { progress ->
+                                // Continue Watching reopens the last stream directly (details if it has no IMDb id).
+                                val media = progress.mediaItem
+                                val imdbId = media.imdbId ?: media.id.takeIf { it.startsWith("tt") }
+                                if (imdbId == null) {
+                                    openDetails(media)
+                                } else {
+                                    val season = progress.seasonNumber
+                                    val episode = progress.episodeNumber
+                                    val videoId = if (season != null && episode != null) "$imdbId:$season:$episode" else imdbId
+                                    val title = if (season != null && episode != null) "${media.title} S${season}E$episode" else media.title
+                                    openStreams(media.type.name, media.id, videoId, title, "resume")
+                                }
+                            },
                             onOpenCatalog = { query, title ->
                                 navController.navigate(
                                     "catalog/${query.kind.name}/${query.type?.name ?: "ALL"}" +
-                                        "?genre=${Uri.encode(query.genre.orEmpty())}&title=${Uri.encode(title)}"
+                                        "?genre=${Uri.encode(query.genre.orEmpty())}&title=${Uri.encode(title)}" +
+                                        "&anime=${Uri.encode(query.animeCatalog.orEmpty())}"
                                 )
                             },
                             onOpenLibrary = { navController.navigateToTopLevel(TopLevelDestination.LIBRARY) },
@@ -187,34 +213,29 @@ fun ArgonNavHost(
                     }
 
                     composable(TopLevelDestination.LIBRARY.route) {
-                        LibraryScreen(onOpenMediaDetails = openDetails)
+                        LibraryScreen(onOpenMediaDetails = openDetails, onPlayFile = playFile)
                     }
 
-                    composable(TopLevelDestination.DOWNLOADS.route) {
-                        DownloadsScreen(
-                            onPlayFile = { uri, title ->
-                                navController.navigate(
-                                    "$PLAYER_ROUTE_PREFIX?videoId=&streamUrl=${Uri.encode(uri.toString())}&streamTitle=${Uri.encode(title)}"
-                                )
-                            }
-                        )
+                    composable("downloads") {
+                        DownloadsScreen(onPlayFile = playFile)
                     }
 
-                    composable(TopLevelDestination.ADDONS.route) {
-                        AddonManagerScreen()
+                    composable("addons") {
+                        AddonManagerScreen(onBack = { navController.popBackStack() })
                     }
 
                     composable(TopLevelDestination.SETTINGS.route) {
-                        SettingsScreen()
+                        SettingsScreen(onOpenAddons = { navController.navigate("addons") })
                     }
 
                     composable(
-                        route = "catalog/{kind}/{type}?genre={genre}&title={title}",
+                        route = "catalog/{kind}/{type}?genre={genre}&title={title}&anime={anime}",
                         arguments = listOf(
                             navArgument("kind") { type = NavType.StringType },
                             navArgument("type") { type = NavType.StringType },
                             navArgument("genre") { type = NavType.StringType; defaultValue = "" },
-                            navArgument("title") { type = NavType.StringType; defaultValue = "" }
+                            navArgument("title") { type = NavType.StringType; defaultValue = "" },
+                            navArgument("anime") { type = NavType.StringType; defaultValue = "" }
                         )
                     ) {
                         CatalogGridScreen(onBack = { navController.popBackStack() }, onOpenMediaDetails = openDetails)
@@ -232,28 +253,32 @@ fun ArgonNavHost(
                         TitleDetailsScreen(
                             onBack = { navController.popBackStack() },
                             onSelectStreams = { stremioVideoId, displayTitle ->
-                                navController.navigate(
-                                    "streams/$type/${Uri.encode(mediaId)}/${Uri.encode(stremioVideoId)}/${Uri.encode(displayTitle)}"
-                                )
+                                openStreams(type, mediaId, stremioVideoId, displayTitle, "play")
+                            },
+                            onDownload = { stremioVideoId, displayTitle ->
+                                openStreams(type, mediaId, stremioVideoId, displayTitle, "download")
                             }
                         )
                     }
 
                     composable(
-                        route = "streams/{type}/{mediaId}/{videoId}/{title}",
+                        route = "streams/{type}/{mediaId}/{videoId}/{title}?mode={mode}",
                         arguments = listOf(
                             navArgument("type") { type = NavType.StringType },
                             navArgument("mediaId") { type = NavType.StringType },
                             navArgument("videoId") { type = NavType.StringType },
-                            navArgument("title") { type = NavType.StringType }
+                            navArgument("title") { type = NavType.StringType },
+                            navArgument("mode") { type = NavType.StringType; defaultValue = "play" }
                         )
                     ) { entry ->
                         val videoId = entry.arguments?.getString("videoId").orEmpty()
                         StreamSelectionScreen(
                             onBack = { navController.popBackStack() },
-                            onOpenAddons = { navController.navigateToTopLevel(TopLevelDestination.ADDONS) },
+                            onOpenAddons = { navController.navigate("addons") },
                             onOpenSettings = { navController.navigateToTopLevel(TopLevelDestination.SETTINGS) },
                             onLaunchResolvedStream = { event ->
+                                // Replace the stream list so Back from the player returns to the title, not the list.
+                                navController.popBackStack()
                                 navController.navigate(
                                     "$PLAYER_ROUTE_PREFIX?videoId=${Uri.encode(videoId)}" +
                                         "&streamUrl=${Uri.encode(event.streamUrl)}" +

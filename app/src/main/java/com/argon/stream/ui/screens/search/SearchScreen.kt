@@ -40,6 +40,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
@@ -144,9 +146,14 @@ internal fun SearchContent(
             }
         }
 
+        // Fast matches stay on screen while the full list is still loading.
+        if (state.isLoading && state.results.isNotEmpty()) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp))
+        }
+
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             when {
-                state.isLoading -> CircularProgressIndicator()
+                state.isLoading && state.results.isEmpty() -> CircularProgressIndicator()
 
                 state.errorMessage != null -> EmptyState(
                     icon = Icons.Default.CloudOff,
@@ -154,17 +161,12 @@ internal fun SearchContent(
                     message = state.errorMessage.orEmpty()
                 )
 
-                state.query.trim().length < 2 && state.recentSearches.isNotEmpty() -> RecentSearchesList(
-                    recents = state.recentSearches,
-                    onPick = onQueryChange,
-                    onRemove = onRemoveRecent,
-                    onClear = onClearRecents
-                )
-
-                state.query.trim().length < 2 -> EmptyState(
-                    icon = Icons.Default.Search,
-                    title = "Find something to watch",
-                    message = "Type at least 2 characters to search movies and series."
+                state.query.trim().length < 2 -> SearchSuggestions(
+                    state = state,
+                    onPickRecent = onQueryChange,
+                    onRemoveRecent = onRemoveRecent,
+                    onClearRecents = onClearRecents,
+                    onOpen = onOpenMediaDetails
                 )
 
                 state.results.isEmpty() -> EmptyState(
@@ -189,6 +191,55 @@ internal fun SearchContent(
     }
 }
 
+/** Before typing: recent searches and popular titles to browse. */
+@Composable
+private fun SearchSuggestions(
+    state: SearchUiState,
+    onPickRecent: (String) -> Unit,
+    onRemoveRecent: (String) -> Unit,
+    onClearRecents: () -> Unit,
+    onOpen: (MediaItem) -> Unit
+) {
+    if (state.suggestions.isEmpty() && state.recentSearches.isEmpty()) {
+        EmptyState(
+            icon = Icons.Default.Search,
+            title = "Find something to watch",
+            message = "Type at least 2 characters to search movies and series."
+        )
+        return
+    }
+    LazyVerticalGrid(
+        columns = GridCells.Adaptive(minSize = 104.dp),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+        modifier = Modifier.fillMaxSize()
+    ) {
+        if (state.recentSearches.isNotEmpty()) {
+            item(key = "recent", span = { GridItemSpan(maxLineSpan) }) {
+                RecentSearchesList(
+                    recents = state.recentSearches.take(5),
+                    onPick = onPickRecent,
+                    onRemove = onRemoveRecent,
+                    onClear = onClearRecents
+                )
+            }
+        }
+        if (state.suggestions.isNotEmpty()) {
+            item(key = "popular_title", span = { GridItemSpan(maxLineSpan) }) {
+                Text(
+                    "Popular right now",
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+            }
+            items(state.suggestions, key = { "s_${it.type}_${it.id}" }) { item ->
+                MediaCard(item = item, onClick = onOpen)
+            }
+        }
+    }
+}
+
 @Composable
 private fun RecentSearchesList(
     recents: List<String>,
@@ -196,24 +247,24 @@ private fun RecentSearchesList(
     onRemove: (String) -> Unit,
     onClear: () -> Unit
 ) {
-    LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
-        item(key = "header") {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        run {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 8.dp)
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
             ) {
                 Text("Recent searches", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                 TextButton(onClick = onClear) { Text("Clear") }
             }
         }
-        items(recents, key = { it }) { query ->
+        recents.forEach { query ->
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
                     .focusHighlight()
                     .clickable { onPick(query) }
-                    .padding(start = 16.dp, end = 4.dp)
+                    .padding(start = 4.dp)
             ) {
                 Icon(Icons.Default.History, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(modifier = Modifier.width(16.dp))

@@ -89,6 +89,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.material.icons.rounded.SkipNext
+import androidx.compose.material.icons.rounded.Replay10
+import androidx.compose.material.icons.rounded.Replay
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.Forward10
 import androidx.compose.ui.platform.LocalConfiguration
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.coroutineScope
@@ -667,11 +674,14 @@ fun PlayerScreen(
                 .padding(horizontal = 12.dp)
         )
 
-        if (state.isBuffering && state.playbackError == null) {
+        val controlsShown = !isInPip && !isLocked &&
+            (showControls || state.playbackError != null || !state.isPlaying && !state.isBuffering)
+        if (state.isBuffering && state.playbackError == null && !controlsShown) {
             CircularProgressIndicator(
-                color = MaterialTheme.colorScheme.primary,
+                color = Color.White,
                 strokeWidth = 3.dp,
-                modifier = Modifier.align(Alignment.Center).size(52.dp)
+                strokeCap = StrokeCap.Round,
+                modifier = Modifier.align(Alignment.Center).size(56.dp)
             )
         }
 
@@ -715,8 +725,7 @@ fun PlayerScreen(
             }
         }
 
-        val controlsVisible = !isInPip && !isLocked &&
-            (showControls || state.playbackError != null || !state.isPlaying && !state.isBuffering)
+        val controlsVisible = controlsShown
 
         AnimatedVisibility(
             visible = controlsVisible,
@@ -794,19 +803,22 @@ fun PlayerScreen(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .windowInsetsPadding(WindowInsets.displayCutout.union(WindowInsets.systemBars))
-                .padding(end = 24.dp, bottom = if (controlsVisible) 132.dp else 40.dp)
+                .padding(end = 20.dp, bottom = if (controlsVisible) 120.dp else 28.dp)
         ) {
             val label = skip?.first ?: "Skip intro"
-            OutlinedButton(
+            Surface(
                 onClick = { skip?.let { viewModel.seekTo(it.second) }; registerInteraction() },
-                shape = RoundedCornerShape(12.dp),
-                border = androidx.compose.foundation.BorderStroke(1.5.dp, Color.White.copy(alpha = 0.85f)),
-                colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.Black.copy(alpha = 0.55f), contentColor = Color.White),
+                color = Color.White.copy(alpha = 0.92f),
+                contentColor = Color.Black,
+                shape = RoundedCornerShape(50),
+                shadowElevation = 4.dp,
                 modifier = Modifier.focusRequester(skipButtonFocus)
             ) {
-                Icon(Icons.Default.SkipNext, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(if (isTv && !controlsVisible) "$label  (OK)" else label, style = MaterialTheme.typography.labelLarge)
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)) {
+                    Text(label, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.width(6.dp))
+                    Icon(Icons.Rounded.SkipNext, contentDescription = null, modifier = Modifier.size(16.dp))
+                }
             }
         }
 
@@ -826,7 +838,7 @@ fun PlayerScreen(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .windowInsetsPadding(WindowInsets.displayCutout.union(WindowInsets.systemBars))
-                    .padding(end = 24.dp, bottom = if (controlsVisible) 132.dp else 40.dp)
+                    .padding(end = 20.dp, bottom = if (controlsVisible) 120.dp else 28.dp)
             )
         }
 
@@ -906,16 +918,13 @@ internal fun PlayerControlsOverlay(
                     )
                 )
         )
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.displayCutout.union(WindowInsets.systemBars))
-        ) {
+        Box(modifier = Modifier.fillMaxSize()) {
             // Top bar
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .align(Alignment.TopCenter)
+                    .windowInsetsPadding(WindowInsets.displayCutout.union(WindowInsets.systemBars))
                     .padding(horizontal = 8.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -1026,39 +1035,36 @@ internal fun PlayerControlsOverlay(
                 }
             } else if (scrubPositionMs == null) {
                 // Center transport controls (hidden while skipping so the preview has room).
+                // The overlay is laid out edge to edge (no inset padding) so this row is exactly screen-centred.
                 Row(
                     modifier = Modifier.align(Alignment.Center),
-                    horizontalArrangement = Arrangement.spacedBy(40.dp),
+                    horizontalArrangement = Arrangement.spacedBy(48.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(onClick = onSeekBack, modifier = Modifier.size(60.dp)) {
-                        Icon(Icons.Default.Replay10, contentDescription = "Back 10 seconds", tint = Color.White, modifier = Modifier.size(38.dp))
-                    }
-                    Surface(
-                        shape = CircleShape,
-                        color = Color.White.copy(alpha = 0.16f),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.25f)),
-                        modifier = Modifier.size(78.dp)
-                    ) {
-                        IconButton(
-                            onClick = onTogglePlay,
-                            modifier = if (playButtonFocus != null) Modifier.focusRequester(playButtonFocus) else Modifier
-                        ) {
-                            Icon(
-                                imageVector = when {
-                                    state.isEnded -> Icons.Default.Replay
-                                    state.isPlaying -> Icons.Default.Pause
-                                    else -> Icons.Default.PlayArrow
+                    TransportButton(Icons.Rounded.Replay10, "Back 10 seconds", 44.dp, onSeekBack)
+                    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(84.dp)) {
+                        if (state.isBuffering) {
+                            CircularProgressIndicator(
+                                color = Color.White,
+                                strokeWidth = 3.dp,
+                                strokeCap = StrokeCap.Round,
+                                modifier = Modifier.size(56.dp)
+                            )
+                        } else {
+                            TransportButton(
+                                icon = when {
+                                    state.isEnded -> Icons.Rounded.Replay
+                                    state.isPlaying -> Icons.Rounded.Pause
+                                    else -> Icons.Rounded.PlayArrow
                                 },
-                                contentDescription = if (state.isPlaying) "Pause" else "Play",
-                                tint = Color.White,
-                                modifier = Modifier.size(46.dp)
+                                description = if (state.isPlaying) "Pause" else "Play",
+                                iconSize = 64.dp,
+                                onClick = onTogglePlay,
+                                focusRequester = playButtonFocus
                             )
                         }
                     }
-                    IconButton(onClick = onSeekForward, modifier = Modifier.size(60.dp)) {
-                        Icon(Icons.Default.Forward10, contentDescription = "Forward 10 seconds", tint = Color.White, modifier = Modifier.size(38.dp))
-                    }
+                    TransportButton(Icons.Rounded.Forward10, "Forward 10 seconds", 44.dp, onSeekForward)
                 }
             }
 
@@ -1067,6 +1073,7 @@ internal fun PlayerControlsOverlay(
                 modifier = Modifier
                     .fillMaxWidth()
                     .align(Alignment.BottomCenter)
+                    .windowInsetsPadding(WindowInsets.displayCutout.union(WindowInsets.systemBars))
                     .padding(start = 20.dp, end = 20.dp, bottom = 6.dp)
             ) {
                 val duration = state.durationMs
@@ -1316,50 +1323,77 @@ private fun NextEpisodeCard(
     val focus = remember { FocusRequester() }
     val isTv = LocalIsTv.current
     LaunchedEffect(isTv) { if (isTv) runCatching { focus.requestFocus() } }
-    Surface(
-        color = Color(0xE60D1117),
-        contentColor = Color.White,
-        shape = RoundedCornerShape(18.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
-        modifier = modifier.widthIn(max = 340.dp)
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
     ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(
-                text = "UP NEXT  ·  S${next.seasonNumber} E${next.episodeNumber}",
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary
-            )
-            if (next.title.isNotBlank()) {
-                Text(next.title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(contentAlignment = Alignment.Center) {
-                    Button(onClick = onPlay, enabled = !isLoading, shape = RoundedCornerShape(12.dp), modifier = Modifier.focusRequester(focus)) {
-                        if (isLoading) {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Loading…")
-                        } else {
-                            Icon(Icons.Default.SkipNext, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(if (countdown != null) "Next in ${countdown}s" else "Next episode")
-                        }
-                    }
-                }
-                if (showWatchCredits && !isLoading) {
-                    TextButton(onClick = onWatchCredits) { Text("Watch credits", color = Color.White) }
-                }
-            }
-            if (countdown != null) {
-                LinearProgressIndicator(
-                    progress = { 1f - countdown / 10f },
-                    modifier = Modifier.fillMaxWidth(),
-                    color = MaterialTheme.colorScheme.primary,
-                    trackColor = Color.White.copy(alpha = 0.15f)
-                )
+        if (showWatchCredits && !isLoading) {
+            Surface(
+                onClick = onWatchCredits,
+                color = Color.Black.copy(alpha = 0.55f),
+                contentColor = Color.White,
+                shape = RoundedCornerShape(50),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.35f))
+            ) {
+                Text("Watch credits", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp))
             }
         }
+        // White pill that fills up as the countdown runs, like the big streaming apps.
+        val progress = countdown?.let { 1f - it / 10f } ?: 0f
+        Surface(
+            onClick = onPlay,
+            enabled = !isLoading,
+            color = Color.White.copy(alpha = 0.92f),
+            contentColor = Color.Black,
+            shape = RoundedCornerShape(50),
+            shadowElevation = 4.dp,
+            modifier = Modifier.focusRequester(focus)
+        ) {
+            Box {
+                if (countdown != null) {
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .fillMaxWidth(progress.coerceIn(0f, 1f))
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.35f))
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)) {
+                    if (isLoading) {
+                        CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = Color.Black)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Loading…", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                    } else {
+                        Icon(Icons.Rounded.SkipNext, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = if (countdown != null) "Next episode · ${countdown}s" else "Next episode",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TransportButton(
+    icon: ImageVector,
+    description: String,
+    iconSize: androidx.compose.ui.unit.Dp,
+    onClick: () -> Unit,
+    focusRequester: FocusRequester? = null
+) {
+    IconButton(
+        onClick = onClick,
+        modifier = Modifier
+            .size(iconSize + 20.dp)
+            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+    ) {
+        Icon(icon, contentDescription = description, tint = Color.White, modifier = Modifier.size(iconSize))
     }
 }
 

@@ -61,6 +61,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
@@ -86,6 +88,7 @@ import java.util.Locale
 fun TitleDetailsScreen(
     onBack: () -> Unit,
     onSelectStreams: (stremioVideoId: String, title: String) -> Unit,
+    onDownload: (stremioVideoId: String, title: String) -> Unit = { _, _ -> },
     viewModel: TitleDetailsViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -119,6 +122,7 @@ fun TitleDetailsScreen(
             state = state,
             onBack = onBack,
             onSelectStreams = onSelectStreams,
+            onDownload = onDownload,
             onToggleWatchlist = viewModel::toggleWatchlist,
             onToggleFavorite = viewModel::toggleFavorite,
             onSelectSeason = viewModel::selectSeason,
@@ -151,7 +155,8 @@ internal fun DetailsContent(
     onToggleWatchlist: () -> Unit,
     onToggleFavorite: () -> Unit,
     onSelectSeason: (Int) -> Unit,
-    onToggleWatched: (season: Int, episode: Int) -> Unit = { _, _ -> }
+    onToggleWatched: (season: Int, episode: Int) -> Unit = { _, _ -> },
+    onDownload: (String, String) -> Unit = { _, _ -> }
 ) {
     val context = LocalContext.current
     val item = details.item
@@ -241,16 +246,30 @@ internal fun DetailsContent(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 if (item.type == MediaType.MOVIE) {
-                    Button(
-                        onClick = { imdbId?.let { onSelectStreams(it, item.title) } },
-                        enabled = imdbId != null,
-                        shape = RoundedCornerShape(14.dp),
-                        contentPadding = PaddingValues(vertical = 14.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Default.PlayArrow, contentDescription = null)
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Find streams")
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                        Button(
+                            onClick = { imdbId?.let { onSelectStreams(it, item.title) } },
+                            enabled = imdbId != null,
+                            shape = RoundedCornerShape(14.dp),
+                            contentPadding = PaddingValues(vertical = 14.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.PlayArrow, contentDescription = null)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Play")
+                        }
+                        // Download straight from here; the stream list then opens in download mode.
+                        FilledTonalButton(
+                            onClick = { imdbId?.let { onDownload(it, item.title) } },
+                            enabled = imdbId != null,
+                            shape = RoundedCornerShape(14.dp),
+                            contentPadding = PaddingValues(vertical = 14.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.Download, contentDescription = null)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Download")
+                        }
                     }
                 }
 
@@ -406,6 +425,11 @@ internal fun DetailsContent(
                         enabled = imdbId != null,
                         watched = (ep.seasonNumber to ep.episodeNumber) in state.watched,
                         onToggleWatched = { onToggleWatched(ep.seasonNumber, ep.episodeNumber) },
+                        onDownload = {
+                            imdbId?.let {
+                                onDownload(ep.buildStremioVideoId(it), "${item.title} S${ep.seasonNumber}E${ep.episodeNumber}")
+                            }
+                        },
                         onClick = {
                             imdbId?.let {
                                 onSelectStreams(
@@ -536,7 +560,8 @@ private fun EpisodeRowItem(
     enabled: Boolean,
     watched: Boolean,
     onToggleWatched: () -> Unit,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onDownload: () -> Unit = {}
 ) {
     val isUpcoming = episode.airDate?.let { date ->
         runCatching { LocalDate.parse(date.take(10)).isAfter(LocalDate.now()) }.getOrDefault(false)
@@ -604,12 +629,19 @@ private fun EpisodeRowItem(
                 )
             }
         }
-        IconButton(onClick = onToggleWatched) {
-            Icon(
-                imageVector = if (watched) Icons.Default.CheckCircle else Icons.Default.CheckCircleOutline,
-                contentDescription = if (watched) "Mark as unwatched" else "Mark as watched",
-                tint = if (watched) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant
-            )
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            IconButton(onClick = onToggleWatched) {
+                Icon(
+                    imageVector = if (watched) Icons.Default.CheckCircle else Icons.Default.CheckCircleOutline,
+                    contentDescription = if (watched) "Mark as unwatched" else "Mark as watched",
+                    tint = if (watched) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (enabled && !isUpcoming) {
+                IconButton(onClick = onDownload) {
+                    Icon(Icons.Default.Download, contentDescription = "Download episode", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
         }
     }
 }

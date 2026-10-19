@@ -49,6 +49,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.argon.stream.ui.components.focusHighlight
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Extension
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
@@ -101,17 +104,19 @@ interface SettingsActions {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(
+    onOpenAddons: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    SettingsContent(state = state, actions = viewModel)
+    SettingsContent(state = state, actions = viewModel, onOpenAddons = onOpenAddons)
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun SettingsContent(
     state: SettingsUiState,
-    actions: SettingsActions
+    actions: SettingsActions,
+    onOpenAddons: () -> Unit = {}
 ) {
     val prefs = state.preferences
     var pendingConfirm by remember { mutableStateOf<ConfirmAction?>(null) }
@@ -189,6 +194,29 @@ internal fun SettingsContent(
         state.statusMessage?.let { msg ->
             item(key = "status") {
                 StatusMessageCard(message = msg, isError = state.isError, onDismiss = actions::dismissStatus)
+            }
+        }
+
+        item(key = "addons_link") {
+            Surface(
+                onClick = onOpenAddons,
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth().focusHighlight(RoundedCornerShape(16.dp))
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(16.dp)) {
+                    Icon(Icons.Default.Extension, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(modifier = Modifier.width(14.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Add-ons", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Stream, subtitle and catalog sources",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
         }
 

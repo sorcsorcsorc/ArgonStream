@@ -30,6 +30,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.DownloadForOffline
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Refresh
@@ -92,7 +93,8 @@ fun StreamSelectionScreen(
         onDismissStatus = viewModel::dismissStatusDialog,
         onDismissMultiFile = viewModel::dismissMultiFileDialog,
         onSelectMultiFile = viewModel::onMultiFileSelected,
-        onDismissToast = viewModel::dismissToast
+        onDismissToast = viewModel::dismissToast,
+        onCancelAutoResume = viewModel::cancelAutoResume
     )
 }
 
@@ -110,7 +112,8 @@ internal fun StreamSelectionContent(
     onDismissStatus: () -> Unit,
     onDismissMultiFile: () -> Unit,
     onSelectMultiFile: (Int, com.argon.stream.domain.model.TorBoxMediaFile) -> Unit,
-    onDismissToast: () -> Unit = {}
+    onDismissToast: () -> Unit = {},
+    onCancelAutoResume: () -> Unit = {}
 ) {
 
     state.multiFilePrompt?.let { prompt ->
@@ -186,7 +189,11 @@ internal fun StreamSelectionContent(
         Column(modifier = Modifier.fillMaxSize()) {
             ScreenHeader(
                 title = state.title,
-                subtitle = if (state.isLoading) "Searching your add-ons…" else "${state.streams.size} streams",
+                subtitle = when {
+                    state.isLoading -> "Searching your add-ons…"
+                    state.mode == StreamScreenMode.DOWNLOAD -> "Pick a stream to download · ${state.streams.size} streams"
+                    else -> "${state.streams.size} streams"
+                },
                 navigation = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -262,6 +269,36 @@ internal fun StreamSelectionContent(
                     onDownloadStream = onDownloadStream,
                     onSetSort = onSetSort
                 )
+            }
+        }
+
+        // Continue Watching: covers the list while the last-used source is reopened automatically.
+        if (state.isAutoResuming) {
+            Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxSize()) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                    modifier = Modifier.fillMaxSize().padding(32.dp)
+                ) {
+                    CircularProgressIndicator()
+                    Spacer(modifier = Modifier.height(20.dp))
+                    Text("Resuming", style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        state.title,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        if (state.isLoading) "Finding the stream you used last…" else "Starting playback…",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(20.dp))
+                    OutlinedButton(onClick = onCancelAutoResume) { Text("Choose another stream") }
+                }
             }
         }
 
@@ -385,7 +422,8 @@ private fun StreamList(
                 isLastUsed = candidate.uniqueKey == state.lastUsedKey,
                 enabled = !state.isResolving,
                 onClick = { onSelectStream(candidate) },
-                onDownload = { onDownloadStream(candidate) }
+                onDownload = { onDownloadStream(candidate) },
+                downloadMode = state.mode == StreamScreenMode.DOWNLOAD
             )
         }
     }
@@ -398,7 +436,8 @@ private fun StreamCandidateCard(
     isLastUsed: Boolean,
     enabled: Boolean,
     onClick: () -> Unit,
-    onDownload: () -> Unit
+    onDownload: () -> Unit,
+    downloadMode: Boolean = false
 ) {
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainer,
@@ -492,12 +531,12 @@ private fun StreamCandidateCard(
             Spacer(modifier = Modifier.width(4.dp))
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Icon(
-                    imageVector = Icons.Default.PlayCircle,
-                    contentDescription = "Play",
+                    imageVector = if (downloadMode) Icons.Default.DownloadForOffline else Icons.Default.PlayCircle,
+                    contentDescription = if (downloadMode) "Download" else "Play",
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(32.dp)
                 )
-                IconButton(onClick = onDownload, enabled = enabled) {
+                if (!downloadMode) IconButton(onClick = onDownload, enabled = enabled) {
                     Icon(
                         imageVector = Icons.Default.Download,
                         contentDescription = "Download",
